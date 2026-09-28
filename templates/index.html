@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Surge VLESS 桥接管理中枢</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text-main: #f8fafc;
+      --text-sub: #94a3b8;
+      --primary: #38bdf8;
+      --primary-hover: #0ea5e9;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --tag-bg: #334155;
+      --code-bg: #0b1120;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text-main);
+      line-height: 1.5;
+      padding: 24px;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--card-border);
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .title-area h1 {
+      font-size: 24px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .title-area p {
+      color: var(--text-sub);
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 600;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status-badge.stopped {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    button {
+      cursor: pointer;
+      font-family: inherit;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #0f172a;
+    }
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-secondary {
+      background: var(--card-border);
+      color: var(--text-main);
+    }
+    .btn-secondary:hover {
+      background: #475569;
+    }
+
+    .btn-sm {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+
+    /* Grid Layout */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 860px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Card */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    textarea {
+      width: 100%;
+      height: 180px;
+      background: var(--code-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      color: var(--text-main);
+      padding: 12px;
+      font-family: monospace;
+      font-size: 13px;
+      resize: vertical;
+      line-height: 1.4;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .input-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    /* Node List */
+    .node-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 480px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .node-card {
+      background: var(--code-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .node-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .node-title {
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .node-meta {
+      font-size: 12px;
+      color: var(--text-sub);
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .socks-tag {
+      color: var(--primary);
+      font-family: monospace;
+      font-weight: 600;
+    }
+
+    .tag {
+      background: var(--tag-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+
+    .node-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ping-badge {
+      font-size: 12px;
+      font-family: monospace;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #334155;
+      color: var(--text-sub);
+    }
+    .ping-badge.good { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+    .ping-badge.fail { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+
+    /* Surge Snippet Card */
+    .snippet-tabs {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 8px;
+      margin-bottom: 12px;
+    }
+
+    .tab-btn {
+      background: transparent;
+      color: var(--text-sub);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .tab-btn.active {
+      background: var(--card-border);
+      color: var(--text-main);
+      font-weight: 600;
+    }
+
+    .code-box {
+      position: relative;
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 16px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #38bdf8;
+      overflow-x: auto;
+      max-height: 240px;
+      white-space: pre;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+    }
+
+    /* Tutorial Section */
+    .guide-step {
+      display: flex;
+      gap: 12px;
+      margin-top: 12px;
+      align-items: flex-start;
+    }
+
+    .step-num {
+      background: var(--primary);
+      color: #0f172a;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .step-text {
+      font-size: 13px;
+      color: var(--text-sub);
+    }
+    .step-text strong {
+      color: var(--text-main);
+    }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 10px 18px;
+      background: var(--primary);
+      color: #0f172a;
+      font-weight: 600;
+      border-radius: 8px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.2s ease;
+      pointer-events: none;
+      z-index: 9999;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Header -->
+  <header>
+    <div class="title-area">
+      <h1>⚡ Surge VLESS 桥接管理中枢</h1>
+      <p>自动将 VLESS / Reality 节点转为本地独立 SOCKS5 端口，直接供 Surge 分流与测速</p>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <div id="statusBadge" class="status-badge">
+        <span class="status-dot"></span>
+        <span id="statusText">检测中...</span>
+      </div>
+      <div class="btn-group">
+        <button class="btn-secondary btn-sm" onclick="restartCore()">🔄 重启核心</button>
+        <button class="btn-secondary btn-sm" onclick="stopCore()">⏹️ 停止</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Missing Xray Alert Banner -->
+  <div id="xrayWarning" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; align-items: center; justify-content: space-between; gap: 12px;">
+    <div style="font-size: 13px; color: #fca5a5;">
+      ⚠️ <strong>未检测到 Xray 核心:</strong> 本机尚未安装 Xray，节点将无法启动。请在终端执行：
+      <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; color: #fff;">brew install xray</code>
+    </div>
+    <button class="btn-secondary btn-sm" onclick="copyRaw('brew install xray')">复制安装命令</button>
+  </div>
+
+  <!-- Main Grid -->
+  <div class="grid">
+    <!-- Left: Input Area -->
+    <div class="card">
+      <h2>
+        <span>📋 粘贴 VLESS 节点链接</span>
+        <span style="font-size: 12px; color: var(--text-sub); font-weight: normal;">支持多行批量</span>
+      </h2>
+      <textarea id="rawInput" placeholder="直接粘贴一条或多条 vless:// 链接，一行一个：
+vless://uuid@server:port?type=tcp&security=reality&pbk=...&sni=...#香港01
+vless://uuid@server:port?type=ws&security=tls&path=/...#日本02"></textarea>
+      
+      <div class="input-actions">
+        <button class="btn-secondary btn-sm" onclick="clearInput()">清空</button>
+        <button class="btn-primary" id="saveBtn" onclick="saveNodes()">⚡ 解析并启动/应用</button>
+      </div>
+    </div>
+
+    <!-- Right: Active Nodes -->
+    <div class="card">
+      <h2>
+        <span>🟢 当前映射节点 (<span id="nodeCount">0</span>)</span>
+        <button class="btn-secondary btn-sm" onclick="pingAll()">⚡ 一键全部测速</button>
+      </h2>
+      <div class="node-list" id="nodeList">
+        <div style="color: var(--text-sub); font-size: 13px; text-align: center; padding: 40px 0;">
+          暂无节点，请在左侧粘贴 vless:// 链接并点击“解析并启动”
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Surge Configuration Export -->
+  <div class="card" style="margin-bottom: 24px;">
+    <h2>
+      <span>🛠️ Surge 一键配置代码</span>
+    </h2>
+    <div class="snippet-tabs">
+      <button class="tab-btn active" onclick="switchTab('proxyTab')">1. [Proxy] 节点配置 (必选)</button>
+      <button class="tab-btn" onclick="switchTab('groupTab')">2. [Proxy Group] 策略组 (可选)</button>
+      <button class="tab-btn" onclick="switchTab('guideTab')">📖 Surge 配置步骤说明</button>
+    </div>
+
+    <!-- Tab 1: Proxy -->
+    <div id="proxyTab" class="tab-content">
+      <div class="code-box">
+        <pre id="proxyCode"># 点击左侧“解析并启动”后自动生成</pre>
+        <button class="btn-primary btn-sm copy-btn" onclick="copyText('proxyCode')">复制 [Proxy] 配置</button>
+      </div>
+    </div>
+
+    <!-- Tab 2: Group -->
+    <div id="groupTab" class="tab-content" style="display: none;">
+      <div class="code-box">
+        <pre id="groupCode"># 点击左侧“解析并启动”后自动生成</pre>
+        <button class="btn-primary btn-sm copy-btn" onclick="copyText('groupCode')">复制 [Proxy Group] 配置</button>
+      </div>
+    </div>
+
+    <!-- Tab 3: Guide -->
+    <div id="guideTab" class="tab-content" style="display: none;">
+      <div class="guide-step">
+        <div class="step-num">1</div>
+        <div class="step-text">打开 <strong>Surage for Mac</strong>，在顶部菜单栏图标上右键，点击 <strong>配置文件 (Profiles) -> 文本编辑 (Edit in Text Editor)</strong>。</div>
+      </div>
+      <div class="guide-step">
+        <div class="step-num">2</div>
+        <div class="step-text">找到配置文件中的 <strong>[Proxy]</strong> 部分，复制上方 <strong>[Proxy]</strong> 中的内容粘贴进去。</div>
+      </div>
+      <div class="guide-step">
+        <div class="step-num">3</div>
+        <div class="step-text">找到 <strong>[Proxy Group]</strong> 部分，将自动生成的策略组（包含自动优选与手动选择）粘贴进去。</div>
+      </div>
+      <div class="guide-step">
+        <div class="step-num">4</div>
+        <div class="step-text">保存文件，Surge 会自动重载配置，即可在 Surge 策略组中无缝使用 VLESS 节点！</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast">已复制到剪贴板</div>
+
+<script>
+  let currentNodes = [];
+
+  function showToast(msg) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  }
+
+  function copyText(elementId) {
+    const text = document.getElementById(elementId).innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('已复制到剪贴板！');
+    });
+  }
+
+  function copyRaw(str) {
+    navigator.clipboard.writeText(str).then(() => {
+      showToast('已复制: ' + str);
+    });
+  }
+
+  function switchTab(tabId) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+    document.getElementById(tabId).style.display = 'block';
+    event.target.classList.add('active');
+  }
+
+  function clearInput() {
+    document.getElementById('rawInput').value = '';
+  }
+
+  async function loadStatus() {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      
+      const xrayWarning = document.getElementById('xrayWarning');
+      if (xrayWarning) {
+        xrayWarning.style.display = data.xray_installed ? 'none' : 'flex';
+      }
+
+      const badge = document.getElementById('statusBadge');
+      const statusText = document.getElementById('statusText');
+      if (data.running) {
+        badge.className = 'status-badge';
+        statusText.textContent = `Xray 运行中 (PID: ${data.pid})`;
+      } else {
+        badge.className = 'status-badge stopped';
+        statusText.textContent = '核心已停止';
+      }
+
+      if (data.raw && !document.getElementById('rawInput').value) {
+        document.getElementById('rawInput').value = data.raw;
+      }
+
+      renderNodes(data.nodes || []);
+      if (data.surge_proxy) document.getElementById('proxyCode').innerText = data.surge_proxy;
+      if (data.surge_group) document.getElementById('groupCode').innerText = data.surge_group;
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function renderNodes(nodes) {
+    currentNodes = nodes;
+    document.getElementById('nodeCount').innerText = nodes.length;
+    const list = document.getElementById('nodeList');
+    if (!nodes || nodes.length === 0) {
+      list.innerHTML = `<div style="color: var(--text-sub); font-size: 13px; text-align: center; padding: 40px 0;">暂无节点，请在左侧粘贴 vless:// 链接并应用</div>`;
+      return;
+    }
+
+    list.innerHTML = nodes.map(node => {
+      const tags = (node.features || []).map(f => `<span class="tag">${f}</span>`).join(' ');
+      const surgeLine = `${node.name} = socks5, 127.0.0.1, ${node.port}`;
+      return `
+        <div class="node-card">
+          <div class="node-main">
+            <div class="node-title">
+              <span>${node.name}</span>
+            </div>
+            <div class="node-meta">
+              <span class="socks-tag">127.0.0.1:${node.port}</span>
+              <span>${node.server}</span>
+              ${tags}
+            </div>
+          </div>
+          <div class="node-actions">
+            <span id="ping-${node.port}" class="ping-badge">- ms</span>
+            <button class="btn-secondary btn-sm" onclick="pingNode(${node.port})">测速</button>
+            <button class="btn-secondary btn-sm" onclick="copyRaw('${surgeLine}')">复制</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function saveNodes() {
+    const raw = document.getElementById('rawInput').value.trim();
+    if (!raw) {
+      alert('请先粘贴 vless:// 链接！');
+      return;
+    }
+
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    btn.innerText = '正在校验并启动...';
+
+    try {
+      const res = await fetch('/api/nodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw_links: raw })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(data.message);
+        renderNodes(data.nodes);
+        document.getElementById('proxyCode').innerText = data.surge_proxy;
+        document.getElementById('groupCode').innerText = data.surge_group;
+        loadStatus();
+      } else {
+        alert('配置失败: ' + (data.error || '未知错误'));
+      }
+    } catch (e) {
+      alert('网络请求失败: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerText = '⚡ 解析并启动/应用';
+    }
+  }
+
+  async function pingNode(port) {
+    const badge = document.getElementById(`ping-${port}`);
+    badge.className = 'ping-badge';
+    badge.innerText = '...';
+    try {
+      const res = await fetch(`/api/ping?port=${port}`);
+      const data = await res.json();
+      if (data.ok) {
+        badge.className = 'ping-badge good';
+        badge.innerText = `${data.latency} ms`;
+      } else {
+        badge.className = 'ping-badge fail';
+        badge.innerText = '超时/失败';
+      }
+    } catch (e) {
+      badge.className = 'ping-badge fail';
+      badge.innerText = '异常';
+    }
+  }
+
+  async function pingAll() {
+    for (const node of currentNodes) {
+      pingNode(node.port);
+    }
+  }
+
+  async function restartCore() {
+    try {
+      const res = await fetch('/api/restart', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('Xray 核心已重启');
+        loadStatus();
+      } else {
+        alert('重启失败: ' + data.error);
+      }
+    } catch (e) {
+      alert('请求失败: ' + e.message);
+    }
+  }
+
+  async function stopCore() {
+    try {
+      const res = await fetch('/api/stop', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('Xray 核心已停止');
+        loadStatus();
+      }
+    } catch (e) {
+      alert('请求失败: ' + e.message);
+    }
+  }
+
+  // Initial load
+  loadStatus();
+  setInterval(loadStatus, 5000);
+</script>
+
+</body>
+</html>

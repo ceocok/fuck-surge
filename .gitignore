@@ -1,0 +1,11 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# User runtime data & logs
+data/*
+!data/.gitkeep
+
+# macOS metadata
+.DS_Store

@@ -87,7 +87,7 @@ class XrayManager:
     def start(cls):
         cls.stop()
         if not XRAY_BIN:
-            raise RuntimeError("未在系统中找到 xray 可执行文件，请先运行 brew install xray")
+            raise RuntimeError("未在系统中找到 xray 可执行文件，请先运行: brew install xray")
         if not CONFIG_PATH.exists():
             return False
 
@@ -109,7 +109,7 @@ class XrayManager:
     @classmethod
     def test_config(cls, test_config_path: Path):
         if not XRAY_BIN:
-            raise RuntimeError("未在系统中找到 xray 可执行文件")
+            raise RuntimeError("未在系统中找到 xray 可执行文件，请先运行: brew install xray")
         res = subprocess.run(
             [XRAY_BIN, "run", "-test", "-c", str(test_config_path)],
             capture_output=True,
@@ -340,6 +340,61 @@ def save_nodes(raw_text, nodes):
     NODES_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
+def rebuild_and_apply_nodes(node_list):
+    """
+    Rebuilds complete Xray config from given node dicts, validates, saves, and restarts Xray.
+    """
+    if not node_list:
+        save_nodes("", [])
+        XrayManager.stop()
+        CONFIG_PATH.unlink(missing_ok=True)
+        return True, []
+
+    full_nodes = []
+    seen_names = {}
+    for n in node_list:
+        port = n["port"]
+        parsed = parse_vless_link(n["raw_link"], port)
+        if parsed:
+            desired_name = n.get("name") or parsed["name"]
+            if desired_name in seen_names:
+                seen_names[desired_name] += 1
+                desired_name = f"{desired_name}_{seen_names[desired_name]}"
+            else:
+                seen_names[desired_name] = 1
+            parsed["name"] = desired_name
+            full_nodes.append(parsed)
+
+    if not full_nodes:
+        raise RuntimeError("所有节点均解析失败，请检查链接有效性")
+
+    config_dict = build_xray_config(full_nodes)
+
+    temp_config = DATA_DIR / "test_config.json"
+    temp_config.write_text(json.dumps(config_dict, indent=2))
+    try:
+        XrayManager.test_config(temp_config)
+    except Exception as e:
+        temp_config.unlink(missing_ok=True)
+        raise e
+    finally:
+        temp_config.unlink(missing_ok=True)
+
+    CONFIG_PATH.write_text(json.dumps(config_dict, indent=2))
+
+    display_nodes = []
+    raw_links = []
+    for n in full_nodes:
+        dn = dict(n)
+        dn.pop("outbound", None)
+        display_nodes.append(dn)
+        raw_links.append(n["raw_link"])
+
+    save_nodes("\n".join(raw_links), display_nodes)
+    XrayManager.start()
+    return True, display_nodes
+
+
 class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -407,9 +462,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
             port = int(port_str)
-            # Run curl test
             try:
-                t0 = time.time()
                 res = subprocess.run(
                     [
                         "curl",
@@ -458,88 +511,133 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/api/nodes":
+            mode = body.get("mode", "append")  # "append" or "replace"
             raw_text = body.get("raw_links", "")
             lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
 
-            parsed_nodes = []
-            seen_names = {}
-            current_port = BASE_SOCKS_PORT
+            saved = load_saved_nodes()
+            existing_nodes = saved.get("nodes", []) if mode == "append" else []
+            existing_links = set(n.get("raw_link", "").strip() for n in existing_nodes)
+            existing_ports = set(n["port"] for n in existing_nodes if "port" in n)
+
+            # Monotonic sequential port allocation
+            if existing_ports:
+                next_port = max(existing_ports) + 1
+            else:
+                next_port = BASE_SOCKS_PORT
+
+            added_count = 0
+            skipped_count = 0
+            new_nodes_to_add = []
 
             for line in lines:
                 if not line.startswith("vless://"):
                     continue
-                node = parse_vless_link(line, current_port)
-                if node:
-                    # Deduplicate name
-                    base_name = node["name"]
-                    if base_name in seen_names:
-                        seen_names[base_name] += 1
-                        node["name"] = f"{base_name}_{seen_names[base_name]}"
-                    else:
-                        seen_names[base_name] = 1
-                    parsed_nodes.append(node)
-                    current_port += 1
+                if line in existing_links:
+                    skipped_count += 1
+                    continue
 
-            if not parsed_nodes:
-                self.send_json(
-                    {
-                        "ok": False,
-                        "error": "未解析到有效的 vless:// 链接，请检查输入格式",
-                    },
-                    400,
-                )
+                while next_port in existing_ports:
+                    next_port += 1
+
+                temp_node = parse_vless_link(line, next_port)
+                if temp_node:
+                    new_nodes_to_add.append(temp_node)
+                    existing_links.add(line)
+                    existing_ports.add(next_port)
+                    next_port += 1
+                    added_count += 1
+
+            if added_count == 0:
+                if skipped_count > 0:
+                    self.send_json(
+                        {"ok": False, "error": f"所粘贴的 {skipped_count} 个节点已存在，未重复添加"},
+                        400,
+                    )
+                else:
+                    self.send_json(
+                        {"ok": False, "error": "未解析到有效的 vless:// 链接，请检查输入格式"},
+                        400,
+                    )
                 return
 
-            # Build config
-            config_dict = build_xray_config(parsed_nodes)
-
-            # Test config using temporary file
-            temp_config = DATA_DIR / "test_config.json"
-            temp_config.write_text(json.dumps(config_dict, indent=2))
+            combined_nodes = list(existing_nodes) + new_nodes_to_add
             try:
-                XrayManager.test_config(temp_config)
+                _, display_nodes = rebuild_and_apply_nodes(combined_nodes)
             except Exception as e:
-                temp_config.unlink(missing_ok=True)
                 self.send_json({"ok": False, "error": str(e)}, 400)
                 return
-            finally:
-                temp_config.unlink(missing_ok=True)
 
-            # Save real config
-            CONFIG_PATH.write_text(json.dumps(config_dict, indent=2))
+            proxy_snippet, group_snippet = generate_surge_snippets(display_nodes)
+            msg = f"成功追加 {added_count} 个节点！" if mode == "append" else f"已覆盖保存 {added_count} 个节点！"
+            if skipped_count > 0:
+                msg += f"（已自动跳过 {skipped_count} 个重复节点）"
 
-            # Strip outbound detail from node display object
-            display_nodes = []
-            for n in parsed_nodes:
-                dn = dict(n)
-                dn.pop("outbound", None)
-                display_nodes.append(dn)
+            self.send_json(
+                {
+                    "ok": True,
+                    "message": msg,
+                    "added_count": added_count,
+                    "skipped_count": skipped_count,
+                    "nodes": display_nodes,
+                    "surge_proxy": proxy_snippet,
+                    "surge_group": group_snippet,
+                    "running": True,
+                    "pid": XrayManager.get_pid(),
+                }
+            )
+            return
 
-            save_nodes(raw_text, display_nodes)
+        if path == "/api/nodes/delete":
+            port_to_delete = body.get("port")
+            if not port_to_delete:
+                self.send_json({"ok": False, "error": "缺少要删除的节点端口"}, 400)
+                return
 
-            # Restart Xray with new config
+            saved = load_saved_nodes()
+            existing_nodes = saved.get("nodes", [])
+            remaining_nodes = [n for n in existing_nodes if n.get("port") != port_to_delete]
+
+            if len(remaining_nodes) == len(existing_nodes):
+                self.send_json({"ok": False, "error": "未找到该节点"}, 404)
+                return
+
             try:
-                XrayManager.start()
+                _, display_nodes = rebuild_and_apply_nodes(remaining_nodes)
             except Exception as e:
-                self.send_json(
-                    {
-                        "ok": False,
-                        "error": f"配置已保存，但启动 Xray 失败: {str(e)}",
-                    },
-                    500,
-                )
+                self.send_json({"ok": False, "error": str(e)}, 500)
                 return
 
             proxy_snippet, group_snippet = generate_surge_snippets(display_nodes)
             self.send_json(
                 {
                     "ok": True,
-                    "message": f"成功配置并启动 {len(display_nodes)} 个节点！",
+                    "message": "节点已删除！",
                     "nodes": display_nodes,
                     "surge_proxy": proxy_snippet,
                     "surge_group": group_snippet,
-                    "running": True,
+                    "running": XrayManager.is_running(),
                     "pid": XrayManager.get_pid(),
+                }
+            )
+            return
+
+        if path == "/api/nodes/clear":
+            try:
+                rebuild_and_apply_nodes([])
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 500)
+                return
+
+            self.send_json(
+                {
+                    "ok": True,
+                    "message": "已清空所有节点并停止内核",
+                    "nodes": [],
+                    "surge_proxy": "",
+                    "surge_group": "",
+                    "running": False,
+                    "pid": None,
                 }
             )
             return

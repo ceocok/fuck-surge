@@ -276,6 +276,7 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      flex-wrap: wrap;
     }
 
     .ping-badge {
@@ -365,6 +366,100 @@
       color: var(--text-main);
     }
 
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(5px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      padding: 16px;
+    }
+    .modal-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 680px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      animation: modalFadeIn 0.2s ease-out;
+    }
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-header h3 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .modal-close {
+      background: transparent;
+      color: var(--text-sub);
+      font-size: 22px;
+      line-height: 1;
+      padding: 2px 6px;
+      cursor: pointer;
+    }
+    .modal-close:hover {
+      color: var(--text-main);
+    }
+    .modal-body {
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .modal-footer {
+      padding: 14px 20px;
+      border-top: 1px solid var(--card-border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .form-row {
+      display: flex;
+      gap: 12px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .form-group label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-sub);
+    }
+    .form-group input, .form-group select {
+      background: var(--code-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      color: var(--text-main);
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .form-group input:focus, .form-group select:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    .flex-1 { flex: 1; }
+    .flex-2 { flex: 2; }
+
     /* Toast */
     #toast {
       position: fixed;
@@ -380,7 +475,7 @@
       transform: translateY(10px);
       transition: all 0.2s ease;
       pointer-events: none;
-      z-index: 9999;
+      z-index: 99999;
     }
     #toast.show {
       opacity: 1;
@@ -507,10 +602,116 @@ vless://uuid@server:port?type=ws&security=tls&path=/...#日本02
   </div>
 </div>
 
+<!-- Edit Node Modal -->
+<div id="editModal" class="modal-overlay" style="display: none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="modalTitle">✏️ 修改节点配置</h3>
+      <button class="modal-close" onclick="closeEditModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editOriginalPort">
+      
+      <div class="form-row">
+        <div class="form-group flex-2">
+          <label>节点名称 (Surge 备注)</label>
+          <input type="text" id="editName" placeholder="例如：香港专线-01" oninput="syncFieldsToUrl()">
+        </div>
+        <div class="form-group flex-1">
+          <label>本地 SOCKS5 端口</label>
+          <input type="number" id="editPort" min="1080" max="65535" placeholder="10810">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group flex-2">
+          <label>远程服务器地址 (Host / IP)</label>
+          <input type="text" id="editServerHost" placeholder="例如：mini.ipp.rest 或 1.2.3.4" oninput="syncFieldsToUrl()">
+        </div>
+        <div class="form-group flex-1">
+          <label>远程端口</label>
+          <input type="number" id="editServerPort" min="1" max="65535" placeholder="443" oninput="syncFieldsToUrl()">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>用户 UUID</label>
+        <input type="text" id="editUuid" placeholder="UUID" oninput="syncFieldsToUrl()">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group flex-2">
+          <label>伪装域名 (SNI / ServerName) <span style="color: #f59e0b; font-size: 11px;">⚠️ 核心伪装</span></label>
+          <input type="text" id="editSni" placeholder="例如：swdist.apple.com" oninput="syncFieldsToUrl()">
+          <div style="font-size: 11px; color: var(--text-sub); margin-top: 3px;">
+            提示: 推荐 swdist.apple.com, dl.google.com 等，避免使用已被阻断的 gateway.icloud.com 或 addons.mozilla.org
+          </div>
+        </div>
+        <div class="form-group flex-1">
+          <label>流控 (Flow)</label>
+          <select id="editFlow" onchange="syncFieldsToUrl()">
+            <option value="xtls-rprx-vision">xtls-rprx-vision</option>
+            <option value="">无 (none)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group flex-1">
+          <label>传输方式 (Type)</label>
+          <select id="editNetwork" onchange="syncFieldsToUrl()">
+            <option value="tcp">tcp</option>
+            <option value="ws">ws (WebSocket)</option>
+            <option value="grpc">grpc</option>
+            <option value="httpupgrade">httpupgrade</option>
+            <option value="h2">h2</option>
+          </select>
+        </div>
+        <div class="form-group flex-1">
+          <label>安全协议 (Security)</label>
+          <select id="editSecurity" onchange="syncFieldsToUrl()">
+            <option value="reality">reality</option>
+            <option value="tls">tls</option>
+            <option value="none">none</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Reality Specific -->
+      <div id="realityFields" class="form-row">
+        <div class="form-group flex-2">
+          <label>Reality 公钥 (PublicKey / pbk)</label>
+          <input type="text" id="editPbk" placeholder="Public Key" oninput="syncFieldsToUrl()">
+        </div>
+        <div class="form-group flex-1">
+          <label>Short ID (sid)</label>
+          <input type="text" id="editSid" placeholder="Short ID" oninput="syncFieldsToUrl()">
+        </div>
+      </div>
+
+      <!-- WS Specific -->
+      <div id="wsFields" class="form-group" style="display: none;">
+        <label>WebSocket 路径 (Path)</label>
+        <input type="text" id="editPath" placeholder="/" oninput="syncFieldsToUrl()">
+      </div>
+
+      <div class="form-group">
+        <label>完整 VLESS 链接 <span style="font-size: 11px; color: var(--text-sub);">(修改上方表单自动同步，亦可直接粘贴整段替换)</span></label>
+        <textarea id="editRawLink" style="height: 65px; font-size: 11px;" oninput="syncUrlToFields()"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeEditModal()">取消</button>
+      <button class="btn-primary" id="saveEditBtn" onclick="submitEditNode()">💾 保存修改并生效</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast">已复制到剪贴板</div>
 
 <script>
   let currentNodes = [];
+  let editingNode = null;
 
   function showToast(msg) {
     const toast = document.getElementById('toast');
@@ -592,12 +793,14 @@ vless://uuid@server:port?type=ws&security=tls&path=/...#日本02
             <div class="node-meta">
               <span class="socks-tag">127.0.0.1:${node.port}</span>
               <span>${node.server}</span>
+              ${node.sni ? `<span class="tag" style="color: #38bdf8;">SNI: ${node.sni}</span>` : ''}
               ${tags}
             </div>
           </div>
           <div class="node-actions">
             <span id="ping-${node.port}" class="ping-badge">- ms</span>
             <button class="btn-secondary btn-sm" onclick="pingNode(${node.port})">测速</button>
+            <button class="btn-secondary btn-sm" onclick="openEditModal(${node.port})">✏️ 修改</button>
             <button class="btn-secondary btn-sm" onclick="copyRaw('${surgeLine}')">复制</button>
             <button class="btn-danger btn-sm" onclick="deleteNode(${node.port}, '${node.name}')" title="删除该节点">删除</button>
           </div>
@@ -606,6 +809,179 @@ vless://uuid@server:port?type=ws&security=tls&path=/...#日本02
     }).join('');
   }
 
+  /* Modal Edit Logic */
+  function openEditModal(port) {
+    const node = currentNodes.find(n => n.port === port);
+    if (!node) return;
+    editingNode = JSON.parse(JSON.stringify(node));
+
+    document.getElementById('modalTitle').innerText = `✏️ 修改节点: ${node.name}`;
+    document.getElementById('editOriginalPort').value = node.port;
+    document.getElementById('editName').value = node.name || '';
+    document.getElementById('editPort').value = node.port || '';
+
+    let host = node.server_host || '';
+    let sPort = node.server_port || 443;
+    if (!host && node.server) {
+      const parts = node.server.split(':');
+      host = parts[0];
+      sPort = parts[1] || 443;
+    }
+
+    document.getElementById('editServerHost').value = host;
+    document.getElementById('editServerPort').value = sPort;
+    document.getElementById('editUuid').value = node.uuid || '';
+    document.getElementById('editSni').value = node.sni || '';
+    document.getElementById('editNetwork').value = node.network || 'tcp';
+    document.getElementById('editSecurity').value = node.security || 'reality';
+    document.getElementById('editFlow').value = node.flow || '';
+    document.getElementById('editPbk').value = node.pbk || '';
+    document.getElementById('editSid').value = node.sid || '';
+    document.getElementById('editPath').value = node.path || '/';
+    document.getElementById('editRawLink').value = node.raw_link || '';
+
+    toggleProtocolFields();
+    document.getElementById('editModal').style.display = 'flex';
+  }
+
+  function closeEditModal() {
+    document.getElementById('editModal').style.display = 'none';
+    editingNode = null;
+  }
+
+  function toggleProtocolFields() {
+    const sec = document.getElementById('editSecurity').value;
+    const net = document.getElementById('editNetwork').value;
+
+    const realityFields = document.getElementById('realityFields');
+    if (realityFields) {
+      realityFields.style.display = (sec === 'reality') ? 'flex' : 'none';
+    }
+
+    const wsFields = document.getElementById('wsFields');
+    if (wsFields) {
+      wsFields.style.display = (net === 'ws' || net === 'httpupgrade') ? 'block' : 'none';
+    }
+  }
+
+  function syncFieldsToUrl() {
+    toggleProtocolFields();
+    const name = document.getElementById('editName').value.trim();
+    const server = document.getElementById('editServerHost').value.trim();
+    const port = document.getElementById('editServerPort').value.trim() || '443';
+    const uuid = document.getElementById('editUuid').value.trim();
+    const sni = document.getElementById('editSni').value.trim();
+    const net = document.getElementById('editNetwork').value;
+    const sec = document.getElementById('editSecurity').value;
+    const flow = document.getElementById('editFlow').value;
+    const pbk = document.getElementById('editPbk').value.trim();
+    const sid = document.getElementById('editSid').value.trim();
+    const path = document.getElementById('editPath').value.trim();
+
+    if (!uuid || !server) return;
+
+    let q = `type=${net}&security=${sec}`;
+    if (flow) q += `&flow=${flow}`;
+    if (sni) q += `&sni=${encodeURIComponent(sni)}`;
+    if (sec === 'reality') {
+      if (pbk) q += `&pbk=${encodeURIComponent(pbk)}`;
+      if (sid) q += `&sid=${encodeURIComponent(sid)}`;
+      q += `&fp=chrome`;
+    } else if (sec === 'tls') {
+      q += `&fp=chrome`;
+    }
+    if (net === 'ws' && path) {
+      q += `&path=${encodeURIComponent(path)}`;
+    }
+
+    const url = `vless://${uuid}@${server}:${port}?${q}#${encodeURIComponent(name || 'VLESS')}`;
+    document.getElementById('editRawLink').value = url;
+  }
+
+  function syncUrlToFields() {
+    const raw = document.getElementById('editRawLink').value.trim();
+    if (!raw.startsWith('vless://')) return;
+    try {
+      const p = new URL(raw);
+      const uuid = p.username;
+      const server = p.hostname;
+      const port = p.port || '443';
+      const params = new URLSearchParams(p.search);
+      const remark = decodeURIComponent(p.hash ? p.hash.substring(1) : '');
+
+      if (uuid) document.getElementById('editUuid').value = uuid;
+      if (server) document.getElementById('editServerHost').value = server;
+      if (port) document.getElementById('editServerPort').value = port;
+      if (remark) document.getElementById('editName').value = remark;
+
+      if (params.has('sni')) document.getElementById('editSni').value = params.get('sni');
+      if (params.has('type')) document.getElementById('editNetwork').value = params.get('type');
+      if (params.has('security')) document.getElementById('editSecurity').value = params.get('security');
+      if (params.has('flow')) document.getElementById('editFlow').value = params.get('flow');
+      if (params.has('pbk')) document.getElementById('editPbk').value = params.get('pbk');
+      if (params.has('sid')) document.getElementById('editSid').value = params.get('sid');
+      if (params.has('path')) document.getElementById('editPath').value = params.get('path');
+
+      toggleProtocolFields();
+    } catch (e) {
+      // url partially typed
+    }
+  }
+
+  async function submitEditNode() {
+    const originalPort = parseInt(document.getElementById('editOriginalPort').value);
+    const newPort = parseInt(document.getElementById('editPort').value);
+    const name = document.getElementById('editName').value.trim();
+    const rawLink = document.getElementById('editRawLink').value.trim();
+
+    if (!name) {
+      alert('请输入节点名称！');
+      return;
+    }
+    if (!newPort || newPort < 1024 || newPort > 65535) {
+      alert('请输入有效的本地 SOCKS5 端口 (1024-65535)！');
+      return;
+    }
+    if (!rawLink.startsWith('vless://')) {
+      alert('VLESS 链接格式错误！');
+      return;
+    }
+
+    const btn = document.getElementById('saveEditBtn');
+    btn.disabled = true;
+    btn.innerText = '正在保存并重载...';
+
+    try {
+      const res = await fetch('/api/nodes/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          original_port: originalPort,
+          port: newPort,
+          name: name,
+          raw_link: rawLink
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(data.message);
+        closeEditModal();
+        renderNodes(data.nodes);
+        document.getElementById('proxyCode').innerText = data.surge_proxy;
+        document.getElementById('groupCode').innerText = data.surge_group;
+        loadStatus();
+      } else {
+        alert('保存失败: ' + (data.error || '未知错误'));
+      }
+    } catch (e) {
+      alert('请求失败: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerText = '💾 保存修改并生效';
+    }
+  }
+
+  /* Node Addition Logic */
   async function saveNodes(mode = 'append') {
     const raw = document.getElementById('rawInput').value.trim();
     if (!raw) {
@@ -633,7 +1009,7 @@ vless://uuid@server:port?type=ws&security=tls&path=/...#日本02
       const data = await res.json();
       if (data.ok) {
         showToast(data.message);
-        document.getElementById('rawInput').value = ''; // 成功后自动清空输入框，方便下次添加
+        document.getElementById('rawInput').value = '';
         renderNodes(data.nodes);
         document.getElementById('proxyCode').innerText = data.surge_proxy;
         document.getElementById('groupCode').innerText = data.surge_group;

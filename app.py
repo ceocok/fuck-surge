@@ -252,6 +252,17 @@ def parse_vless_link(link: str, port: int):
         "raw_link": link,
         "port": port,
         "server": f"{server}:{server_port}",
+        "server_host": server,
+        "server_port": server_port,
+        "uuid": uuid,
+        "sni": sni,
+        "pbk": pbk,
+        "sid": sid,
+        "spx": spx,
+        "flow": flow,
+        "path": path,
+        "host_hdr": host_hdr,
+        "service_name": service_name,
         "network": net,
         "security": security,
         "features": features,
@@ -463,15 +474,19 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
             port = int(port_str)
             try:
+                clean_env = os.environ.copy()
+                for k in ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]:
+                    clean_env.pop(k, None)
+
                 res = subprocess.run(
                     [
                         "curl",
                         "-x",
                         f"socks5h://127.0.0.1:{port}",
                         "--connect-timeout",
-                        "3",
-                        "--max-time",
                         "4",
+                        "--max-time",
+                        "5",
                         "-s",
                         "-w",
                         "%{http_code}:%{time_total}",
@@ -481,7 +496,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     ],
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=6,
+                    env=clean_env,
                 )
                 output = res.stdout.strip()
                 if ":" in output:
@@ -613,6 +629,94 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 {
                     "ok": True,
                     "message": "节点已删除！",
+                    "nodes": display_nodes,
+                    "surge_proxy": proxy_snippet,
+                    "surge_group": group_snippet,
+                    "running": XrayManager.is_running(),
+                    "pid": XrayManager.get_pid(),
+                }
+            )
+            return
+
+        if path == "/api/nodes/update":
+            original_port = body.get("original_port")
+            new_port = body.get("port") or original_port
+            raw_link = body.get("raw_link", "").strip()
+            name = body.get("name", "").strip()
+
+            if not original_port:
+                self.send_json({"ok": False, "error": "缺少原节点端口标识"}, 400)
+                return
+
+            if not raw_link:
+                self.send_json({"ok": False, "error": "节点链接不能为空"}, 400)
+                return
+
+            try:
+                original_port = int(original_port)
+                new_port = int(new_port)
+            except ValueError:
+                self.send_json({"ok": False, "error": "端口号必须为数字"}, 400)
+                return
+
+            saved = load_saved_nodes()
+            existing_nodes = saved.get("nodes", [])
+
+            target_idx = -1
+            for i, n in enumerate(existing_nodes):
+                if n.get("port") == original_port:
+                    target_idx = i
+                    break
+
+            if target_idx == -1:
+                self.send_json({"ok": False, "error": "未找到要修改的节点"}, 404)
+                return
+
+            # Check port conflict if port changed
+            if new_port != original_port:
+                for i, n in enumerate(existing_nodes):
+                    if i != target_idx and n.get("port") == new_port:
+                        self.send_json(
+                            {
+                                "ok": False,
+                                "error": f"端口 {new_port} 已被节点【{n.get('name')}】占用，请更换端口",
+                            },
+                            400,
+                        )
+                        return
+
+            parsed = parse_vless_link(raw_link, new_port)
+            if not parsed:
+                self.send_json(
+                    {
+                        "ok": False,
+                        "error": "修改后的链接解析失败，请检查 vless:// 链接格式是否正确",
+                    },
+                    400,
+                )
+                return
+
+            if name:
+                parsed["name"] = sanitize_surge_name(name)
+
+            updated_nodes = list(existing_nodes)
+            updated_node_dict = dict(parsed)
+            updated_node_dict.pop("outbound", None)
+            updated_nodes[target_idx] = updated_node_dict
+
+            try:
+                _, display_nodes = rebuild_and_apply_nodes(updated_nodes)
+            except Exception as e:
+                self.send_json(
+                    {"ok": False, "error": f"配置校验或启动失败: {str(e)}"}, 400
+                )
+                return
+
+            proxy_snippet, group_snippet = generate_surge_snippets(display_nodes)
+            self.send_json(
+                {
+                    "ok": True,
+                    "message": f"节点【{parsed['name']}】修改成功并已生效！",
                     "nodes": display_nodes,
                     "surge_proxy": proxy_snippet,
                     "surge_group": group_snippet,

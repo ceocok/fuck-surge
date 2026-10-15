@@ -148,6 +148,26 @@ def sanitize_surge_name(name: str) -> str:
     return cleaned if cleaned else "Proxy_Node"
 
 
+def check_detour_cycle(nodes_dict):
+    """
+    nodes_dict: {port: detour_port_or_None}
+    Returns True if cycle detected, False otherwise
+    """
+    visited_global = set()
+    for start_port in nodes_dict:
+        if start_port in visited_global:
+            continue
+        curr = start_port
+        visited_curr = set()
+        while curr:
+            if curr in visited_curr:
+                return True
+            visited_curr.add(curr)
+            visited_global.add(curr)
+            curr = nodes_dict.get(curr)
+    return False
+
+
 def parse_vless_link(link: str, port: int):
     link = link.strip()
     if not link.startswith("vless://"):
@@ -440,6 +460,10 @@ def build_singbox_config(parsed_nodes):
         else:
             outbound = build_singbox_vless_outbound(node)
 
+        detour_port = node.get("detour_port")
+        if detour_port:
+            outbound["detour"] = f"out-{detour_port}"
+
         outbounds.append(outbound)
         rules.append(
             {
@@ -542,6 +566,10 @@ def build_xray_vless_outbound(node: dict) -> dict:
             "path": path,
             "host": [host_hdr or sni or server],
         }
+
+    detour_port = node.get("detour_port")
+    if detour_port:
+        outbound["proxySettings"] = {"tag": f"out-{detour_port}"}
 
     return outbound
 
@@ -669,10 +697,27 @@ def rebuild_and_apply_nodes(node_list):
             else:
                 seen_names[desired_name] = 1
             parsed["name"] = desired_name
+
+            # Preserve detour settings
+            if n.get("detour_port"):
+                parsed["detour_port"] = n["detour_port"]
+                parsed["detour_name"] = n.get("detour_name", "")
+
             full_nodes.append(parsed)
 
     if not full_nodes:
         raise RuntimeError("所有节点均解析失败，请检查链接有效性")
+
+    # Validate and resolve detour targets
+    port_to_node = {node["port"]: node for node in full_nodes}
+    for node in full_nodes:
+        dp = node.get("detour_port")
+        if dp:
+            if dp in port_to_node and dp != node["port"]:
+                node["detour_name"] = port_to_node[dp]["name"]
+            else:
+                node.pop("detour_port", None)
+                node.pop("detour_name", None)
 
     core_type, bin_path = get_best_core(full_nodes)
 
@@ -789,9 +834,9 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                         "-x",
                         f"socks5h://127.0.0.1:{port}",
                         "--connect-timeout",
-                        "4",
-                        "--max-time",
                         "5",
+                        "--max-time",
+                        "6",
                         "-s",
                         "-w",
                         "%{http_code}:%{time_total}",
@@ -801,7 +846,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     ],
                     capture_output=True,
                     text=True,
-                    timeout=6,
+                    timeout=7,
                     env=clean_env,
                 )
                 output = res.stdout.strip()
@@ -923,6 +968,11 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "未找到该节点"}, 404)
                 return
 
+            for n in remaining_nodes:
+                if n.get("detour_port") == port_to_delete:
+                    n.pop("detour_port", None)
+                    n.pop("detour_name", None)
+
             try:
                 _, display_nodes = rebuild_and_apply_nodes(remaining_nodes)
             except Exception as e:
@@ -948,6 +998,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             new_port = body.get("port") or original_port
             raw_link = body.get("raw_link", "").strip()
             name = body.get("name", "").strip()
+            detour_port = body.get("detour_port")
 
             if not original_port:
                 self.send_json({"ok": False, "error": "缺少原节点端口标识"}, 400)
@@ -963,6 +1014,15 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             except ValueError:
                 self.send_json({"ok": False, "error": "端口号必须为数字"}, 400)
                 return
+
+            if detour_port is not None and str(detour_port).strip() != "" and str(detour_port).lower() != "none":
+                try:
+                    detour_port = int(detour_port)
+                except ValueError:
+                    self.send_json({"ok": False, "error": "跳板端口必须为数字"}, 400)
+                    return
+            else:
+                detour_port = None
 
             saved = load_saved_nodes()
             existing_nodes = saved.get("nodes", [])
@@ -990,6 +1050,35 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                         )
                         return
 
+            # Check detour settings and cycle detection
+            target_detour_node = None
+            if detour_port:
+                if detour_port == new_port:
+                    self.send_json({"ok": False, "error": "节点不能选择自身作为跳板代理"}, 400)
+                    return
+
+                for n in existing_nodes:
+                    if n.get("port") == detour_port and n.get("port") != original_port:
+                        target_detour_node = n
+                        break
+
+                if not target_detour_node:
+                    self.send_json({"ok": False, "error": f"所选的跳板节点 (端口 {detour_port}) 不存在"}, 400)
+                    return
+
+                # Construct chain graph to detect potential cycles
+                nodes_chain_map = {}
+                for n in existing_nodes:
+                    p = n.get("port")
+                    if p == original_port:
+                        continue
+                    nodes_chain_map[p] = n.get("detour_port")
+                nodes_chain_map[new_port] = detour_port
+
+                if check_detour_cycle(nodes_chain_map):
+                    self.send_json({"ok": False, "error": "跳板代理链路形成了循环嵌套 (例如 A -> B -> A)，请重新选择"}, 400)
+                    return
+
             parsed = parse_node_link(raw_link, new_port)
             if not parsed:
                 self.send_json(
@@ -1006,6 +1095,20 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
             updated_nodes = list(existing_nodes)
             updated_node_dict = dict(parsed)
+
+            if detour_port and target_detour_node:
+                updated_node_dict["detour_port"] = detour_port
+                updated_node_dict["detour_name"] = target_detour_node.get("name", f"Node_{detour_port}")
+            else:
+                updated_node_dict.pop("detour_port", None)
+                updated_node_dict.pop("detour_name", None)
+
+            # If port changed, update any references from other nodes pointing to original_port
+            if new_port != original_port:
+                for n in updated_nodes:
+                    if n.get("detour_port") == original_port:
+                        n["detour_port"] = new_port
+
             updated_nodes[target_idx] = updated_node_dict
 
             try:

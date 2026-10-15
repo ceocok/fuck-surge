@@ -510,7 +510,7 @@
   <header>
     <div class="title-area">
       <h1>⚡ Surge 节点桥接管理中枢</h1>
-      <p>自动将 VLESS / AnyTLS 节点转为本地独立 SOCKS5 端口，直接供 Surge 分流与测速</p>
+      <p>自动将 VLESS / AnyTLS 节点转为本地独立 SOCKS5 端口，支持跳板链式中转，供 Surge 分流与测速</p>
     </div>
     <div style="display: flex; align-items: center; gap: 12px;">
       <div id="statusBadge" class="status-badge">
@@ -647,6 +647,22 @@ anytls://password@server:port?sni=...#日本02
         <div class="form-group flex-1">
           <label>本地 SOCKS5 端口</label>
           <input type="number" id="editPort" min="1080" max="65535" placeholder="10810">
+        </div>
+      </div>
+
+      <!-- Jump Proxy (Detour) -->
+      <div class="form-row">
+        <div class="form-group flex-1">
+          <label style="display: flex; align-items: center; justify-content: space-between;">
+            <span>✈️ 跳板代理 (前置中转节点)</span>
+            <span style="font-weight: normal; color: #f59e0b; font-size: 11px;">链式代理 / 前置中转</span>
+          </label>
+          <select id="editDetour">
+            <option value="">直连 (不使用跳板，默认)</option>
+          </select>
+          <div style="font-size: 11px; color: var(--text-sub); margin-top: 3px;">
+            选择后，请求此节点时将通过所选的前置跳板节点中转，实现链式跳板（前置机 ➔ 落地机）
+          </div>
         </div>
       </div>
 
@@ -834,6 +850,10 @@ anytls://password@server:port?sni=...#日本02
         ? `<span class="tag" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; font-weight: 600;">AnyTLS</span>`
         : `<span class="tag" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-weight: 600;">VLESS</span>`;
 
+      const detourBadge = (node.detour_port && node.detour_name)
+        ? `<span class="tag" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 600;">✈️ 跳板: ${node.detour_name} [${node.detour_port}]</span>`
+        : '';
+
       const tags = (node.features || []).filter(f => f !== 'AnyTLS').map(f => `<span class="tag">${f}</span>`).join(' ');
       const surgeLine = `${node.name} = socks5, 127.0.0.1, ${node.port}`;
       return `
@@ -846,6 +866,7 @@ anytls://password@server:port?sni=...#日本02
             <div class="node-meta">
               <span class="socks-tag">127.0.0.1:${node.port}</span>
               <span>${node.server}</span>
+              ${detourBadge}
               ${node.sni ? `<span class="tag" style="color: #38bdf8;">SNI: ${node.sni}</span>` : ''}
               ${tags}
             </div>
@@ -904,6 +925,19 @@ anytls://password@server:port?sni=...#日本02
     document.getElementById('editProtocol').value = isAnyTLS ? 'anytls' : 'vless';
     document.getElementById('editName').value = node.name || '';
     document.getElementById('editPort').value = node.port || '';
+
+    // Populate Jump Proxy (Detour) Dropdown with all other current nodes
+    const detourSelect = document.getElementById('editDetour');
+    detourSelect.innerHTML = '<option value="">直连 (不使用跳板，默认)</option>';
+    currentNodes.forEach(n => {
+      if (n.port !== node.port) {
+        const opt = document.createElement('option');
+        opt.value = n.port;
+        opt.textContent = `[${n.port}] ${n.name} (${n.server})`;
+        detourSelect.appendChild(opt);
+      }
+    });
+    detourSelect.value = node.detour_port ? String(node.detour_port) : '';
 
     let host = node.server_host || '';
     let sPort = node.server_port || 443;
@@ -1057,6 +1091,8 @@ anytls://password@server:port?sni=...#日本02
     const newPort = parseInt(document.getElementById('editPort').value);
     const name = document.getElementById('editName').value.trim();
     const rawLink = document.getElementById('editRawLink').value.trim();
+    const detourVal = document.getElementById('editDetour').value;
+    const detourPort = detourVal ? parseInt(detourVal) : null;
 
     if (!name) {
       alert('请输入节点名称！');
@@ -1083,7 +1119,8 @@ anytls://password@server:port?sni=...#日本02
           original_port: originalPort,
           port: newPort,
           name: name,
-          raw_link: rawLink
+          raw_link: rawLink,
+          detour_port: detourPort
         })
       });
       const data = await res.json();

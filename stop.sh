@@ -5,7 +5,7 @@ cd "$DIR"
 
 PORT=9099
 
-echo "🛑 正在停止 Surge VLESS Hub 面板与内核..."
+echo "🛑 正在停止 Surge VLESS & AnyTLS Hub 面板与内核..."
 
 # Stop Python web app by PID file
 if [ -f "$DIR/data/app.pid" ]; then
@@ -23,17 +23,20 @@ if [ -n "$APP_PORT_PID" ]; then
     kill -9 $APP_PORT_PID 2>/dev/null
 fi
 
-# Stop Xray if running
-if [ -f "$DIR/data/xray.pid" ]; then
-    XPID=$(cat "$DIR/data/xray.pid")
-    if kill -0 "$XPID" 2>/dev/null; then
-        kill "$XPID" 2>/dev/null
-        echo "已停止 Xray 内核 (PID: $XPID)"
+# Stop Core (sing-box or xray) if running
+for pidfile in "$DIR/data/core.pid" "$DIR/data/xray.pid"; do
+    if [ -f "$pidfile" ]; then
+        XPID=$(cat "$pidfile")
+        if kill -0 "$XPID" 2>/dev/null; then
+            kill "$XPID" 2>/dev/null
+            echo "已停止代理内核 (PID: $XPID)"
+        fi
+        rm -f "$pidfile"
     fi
-    rm -f "$DIR/data/xray.pid"
-fi
+done
 
-# Fallback kill any xray started from this dir
+# Fallback kill any xray / sing-box started with this config
 pkill -f "xray run -c $DIR/data/config.json" 2>/dev/null
+pkill -f "sing-box run -c $DIR/data/config.json" 2>/dev/null
 
 echo "✅ 已完全停止！"

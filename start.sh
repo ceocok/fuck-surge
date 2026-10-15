@@ -16,14 +16,14 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 
-# Check xray presence
-if ! command -v xray &>/dev/null && [ ! -f "/opt/homebrew/bin/xray" ] && [ ! -f "/usr/local/bin/xray" ]; then
-    echo "⚠️  提示: 系统中未找到 xray，请在终端运行: brew install xray"
+# Check core presence (sing-box preferred, xray fallback)
+if ! command -v sing-box &>/dev/null && [ ! -f "/opt/homebrew/bin/sing-box" ] && [ ! -f "/usr/local/bin/sing-box" ] && ! command -v xray &>/dev/null && [ ! -f "/opt/homebrew/bin/xray" ] && [ ! -f "/usr/local/bin/xray" ]; then
+    echo "⚠️  提示: 系统中未找到 sing-box 或 xray，请在终端运行: brew install sing-box"
 fi
 
 # Check if already running
 if lsof -Pi :${PORT} -sTCP:LISTEN -t >/dev/null ; then
-    echo "⚡ Surge VLESS Hub 已经在运行中: ${URL}"
+    echo "⚡ Surge VLESS & AnyTLS Hub 已经在运行中: ${URL}"
     if command -v open &>/dev/null; then
         open "${URL}"
     elif command -v xdg-open &>/dev/null; then
@@ -32,7 +32,7 @@ if lsof -Pi :${PORT} -sTCP:LISTEN -t >/dev/null ; then
     exit 0
 fi
 
-echo "🚀 正在启动 Surge VLESS Hub 面板..."
+echo "🚀 正在启动 Surge VLESS & AnyTLS Hub 面板..."
 nohup python3 "$DIR/app.py" > "$DIR/data/app.log" 2>&1 &
 APP_PID=$!
 echo "$APP_PID" > "$DIR/data/app.pid"

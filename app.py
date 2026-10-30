@@ -22,7 +22,7 @@ LOG_PATH = DATA_DIR / "core.log"
 PID_PATH = DATA_DIR / "core.pid"
 LEGACY_PID_PATH = DATA_DIR / "xray.pid"
 
-BASE_SOCKS_PORT = 10810
+BASE_SOCKS_PORT = 10808
 WEB_PORT = 9099
 
 
@@ -166,6 +166,16 @@ def check_detour_cycle(nodes_dict):
             visited_global.add(curr)
             curr = nodes_dict.get(curr)
     return False
+
+
+def allocate_next_port(existing_ports, base_port=BASE_SOCKS_PORT):
+    """
+    Finds the lowest available port >= base_port to fill gaps when nodes are deleted.
+    """
+    candidate = base_port
+    while candidate in existing_ports:
+        candidate += 1
+    return candidate
 
 
 def parse_vless_link(link: str, port: int):
@@ -313,12 +323,56 @@ def parse_anytls_link(link: str, port: int):
     }
 
 
+def parse_socks_link(link: str, port: int):
+    link = link.strip()
+    if not (link.startswith("socks5://") or link.startswith("socks://")):
+        return None
+
+    try:
+        p = urllib.parse.urlsplit(link)
+    except Exception:
+        return None
+
+    if p.scheme not in ("socks5", "socks"):
+        return None
+
+    server = p.hostname or ""
+    server_port = p.port or 1080
+    user = urllib.parse.unquote(p.username or "")
+    password = urllib.parse.unquote(p.password or "")
+
+    if not server:
+        return None
+
+    raw_remark = urllib.parse.unquote(p.fragment).strip() if p.fragment else ""
+    node_name = sanitize_surge_name(raw_remark or f"SOCKS5_{server}_{port}")
+
+    features = ["SOCKS5"]
+    if user:
+        features.append("Auth")
+
+    return {
+        "protocol": "socks5",
+        "name": node_name,
+        "raw_link": link,
+        "port": port,
+        "server": f"{server}:{server_port}",
+        "server_host": server,
+        "server_port": server_port,
+        "socks_user": user,
+        "socks_pass": password,
+        "features": features,
+    }
+
+
 def parse_node_link(link: str, port: int):
     link = link.strip()
     if link.startswith("vless://"):
         return parse_vless_link(link, port)
     elif link.startswith("anytls://"):
         return parse_anytls_link(link, port)
+    elif link.startswith("socks5://") or link.startswith("socks://"):
+        return parse_socks_link(link, port)
     return None
 
 
@@ -436,6 +490,25 @@ def build_singbox_anytls_outbound(node: dict) -> dict:
     }
 
 
+def build_singbox_socks_outbound(node: dict) -> dict:
+    port = node["port"]
+    server = node["server_host"]
+    server_port = node["server_port"]
+    outbound = {
+        "type": "socks",
+        "tag": f"out-{port}",
+        "server": server,
+        "server_port": server_port,
+    }
+    user = node.get("socks_user", "")
+    pwd = node.get("socks_pass", "")
+    if user:
+        outbound["username"] = user
+    if pwd:
+        outbound["password"] = pwd
+    return outbound
+
+
 def build_singbox_config(parsed_nodes):
     inbounds = []
     outbounds = []
@@ -455,8 +528,11 @@ def build_singbox_config(parsed_nodes):
             }
         )
 
-        if node.get("protocol") == "anytls":
+        proto = node.get("protocol")
+        if proto == "anytls":
             outbound = build_singbox_anytls_outbound(node)
+        elif proto == "socks5":
+            outbound = build_singbox_socks_outbound(node)
         else:
             outbound = build_singbox_vless_outbound(node)
 
@@ -574,6 +650,31 @@ def build_xray_vless_outbound(node: dict) -> dict:
     return outbound
 
 
+def build_xray_socks_outbound(node: dict) -> dict:
+    port = node["port"]
+    server = node["server_host"]
+    server_port = node["server_port"]
+    user = node.get("socks_user", "")
+    pwd = node.get("socks_pass", "")
+    server_obj = {
+        "address": server,
+        "port": server_port,
+    }
+    if user:
+        server_obj["users"] = [{"user": user, "pass": pwd or ""}]
+    outbound = {
+        "tag": f"out-{port}",
+        "protocol": "socks",
+        "settings": {
+            "servers": [server_obj]
+        },
+    }
+    detour_port = node.get("detour_port")
+    if detour_port:
+        outbound["proxySettings"] = {"tag": f"out-{detour_port}"}
+    return outbound
+
+
 def build_xray_config(parsed_nodes):
     inbounds = []
     outbounds = []
@@ -593,7 +694,10 @@ def build_xray_config(parsed_nodes):
                 "settings": {"auth": "noauth", "udp": True},
             }
         )
-        outbounds.append(build_xray_vless_outbound(node))
+        if node.get("protocol") == "socks5":
+            outbounds.append(build_xray_socks_outbound(node))
+        else:
+            outbounds.append(build_xray_vless_outbound(node))
         rules.append(
             {
                 "type": "field",
@@ -876,6 +980,78 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "无效的 JSON 数据"}, 400)
             return
 
+        if path == "/api/nodes/custom":
+            # Add custom SOCKS5 or other node directly without URL
+            proto = body.get("protocol", "socks5").lower()
+            name = body.get("name", "").strip()
+            server = body.get("server", "").strip()
+            server_port = body.get("server_port")
+            user = body.get("socks_user", "").strip()
+            password = body.get("socks_pass", "").strip()
+            detour_port = body.get("detour_port")
+
+            if not server:
+                self.send_json({"ok": False, "error": "服务器地址不能为空"}, 400)
+                return
+
+            try:
+                server_port = int(server_port) if server_port else 1080
+            except ValueError:
+                self.send_json({"ok": False, "error": "服务器端口必须为有效数字"}, 400)
+                return
+
+            saved = load_saved_nodes()
+            existing_nodes = saved.get("nodes", [])
+            existing_ports = set(n["port"] for n in existing_nodes if "port" in n)
+            next_port = allocate_next_port(existing_ports, BASE_SOCKS_PORT)
+
+            if proto == "socks5":
+                auth_part = f"{urllib.parse.quote(user)}:{urllib.parse.quote(password)}@" if user else ""
+                remark_part = f"#{urllib.parse.quote(name)}" if name else ""
+                raw_link = f"socks5://{auth_part}{server}:{server_port}{remark_part}"
+                node_dict = parse_socks_link(raw_link, next_port)
+            else:
+                self.send_json({"ok": False, "error": f"不支持的自定义协议: {proto}"}, 400)
+                return
+
+            if not node_dict:
+                self.send_json({"ok": False, "error": "节点创建失败，请检查参数"}, 400)
+                return
+
+            if name:
+                node_dict["name"] = sanitize_surge_name(name)
+
+            if detour_port:
+                try:
+                    detour_port = int(detour_port)
+                    target_detour = next((n for n in existing_nodes if n.get("port") == detour_port), None)
+                    if target_detour:
+                        node_dict["detour_port"] = detour_port
+                        node_dict["detour_name"] = target_detour.get("name", f"Node_{detour_port}")
+                except (ValueError, TypeError):
+                    pass
+
+            combined_nodes = list(existing_nodes) + [node_dict]
+            try:
+                _, display_nodes = rebuild_and_apply_nodes(combined_nodes)
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 400)
+                return
+
+            proxy_snippet, group_snippet = generate_surge_snippets(display_nodes)
+            self.send_json(
+                {
+                    "ok": True,
+                    "message": f"成功添加自定义 SOCKS5 节点【{node_dict['name']}】！",
+                    "nodes": display_nodes,
+                    "surge_proxy": proxy_snippet,
+                    "surge_group": group_snippet,
+                    "running": True,
+                    "pid": CoreManager.get_pid(),
+                }
+            )
+            return
+
         if path == "/api/nodes":
             mode = body.get("mode", "append")  # "append" or "replace"
             raw_text = body.get("raw_links", "")
@@ -886,32 +1062,25 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             existing_links = set(n.get("raw_link", "").strip() for n in existing_nodes)
             existing_ports = set(n["port"] for n in existing_nodes if "port" in n)
 
-            # Monotonic sequential port allocation
-            if existing_ports:
-                next_port = max(existing_ports) + 1
-            else:
-                next_port = BASE_SOCKS_PORT
-
             added_count = 0
             skipped_count = 0
             new_nodes_to_add = []
 
             for line in lines:
-                if not (line.startswith("vless://") or line.startswith("anytls://")):
+                if not (line.startswith("vless://") or line.startswith("anytls://") or line.startswith("socks5://") or line.startswith("socks://")):
                     continue
                 if line in existing_links:
                     skipped_count += 1
                     continue
 
-                while next_port in existing_ports:
-                    next_port += 1
+                # Find the lowest available port >= BASE_SOCKS_PORT to fill gaps
+                next_port = allocate_next_port(existing_ports, BASE_SOCKS_PORT)
 
                 temp_node = parse_node_link(line, next_port)
                 if temp_node:
                     new_nodes_to_add.append(temp_node)
                     existing_links.add(line)
                     existing_ports.add(next_port)
-                    next_port += 1
                     added_count += 1
 
             if added_count == 0:
@@ -922,7 +1091,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     )
                 else:
                     self.send_json(
-                        {"ok": False, "error": "未解析到有效的 vless:// 或 anytls:// 链接，请检查输入格式"},
+                        {"ok": False, "error": "未解析到有效的 vless://、anytls:// 或 socks5:// 链接，请检查输入格式"},
                         400,
                     )
                 return
@@ -983,7 +1152,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json(
                 {
                     "ok": True,
-                    "message": "节点已删除！",
+                    "message": "节点已删除！空出的端口将在下次添加节点时优先填补复用",
                     "nodes": display_nodes,
                     "surge_proxy": proxy_snippet,
                     "surge_group": group_snippet,
@@ -1084,7 +1253,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(
                     {
                         "ok": False,
-                        "error": "修改后的链接解析失败，请检查 vless:// 或 anytls:// 链接格式是否正确",
+                        "error": "修改后的链接解析失败，请检查 vless://、anytls:// 或 socks5:// 链接格式是否正确",
                     },
                     400,
                 )
@@ -1205,7 +1374,7 @@ def main():
     with ReusableTCPServer(("127.0.0.1", WEB_PORT), RequestHandler) as httpd:
         core_info = "sing-box / xray" if (SING_BOX_BIN and XRAY_BIN) else (SING_BOX_BIN or XRAY_BIN or "未找到(请先安装)")
         print(f"==================================================")
-        print(f"🚀 Surge VLESS & AnyTLS 桥接管理中枢已启动!")
+        print(f"🚀 Surge 节点桥接管理中枢 (VLESS / AnyTLS / SOCKS5) 已启动!")
         print(f"👉 访问面板: http://127.0.0.1:{WEB_PORT}")
         print(f"⚙️ 代理内核: {core_info}")
         print(f"==================================================")

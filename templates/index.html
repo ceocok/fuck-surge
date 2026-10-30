@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Surge 节点桥接管理中枢 (VLESS & AnyTLS)</title>
+  <title>Surge 节点桥接管理中枢 (VLESS / AnyTLS / SOCKS5)</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -211,6 +211,7 @@
     .action-right {
       display: flex;
       gap: 8px;
+      align-items: center;
     }
 
     /* Node List */
@@ -510,7 +511,7 @@
   <header>
     <div class="title-area">
       <h1>⚡ Surge 节点桥接管理中枢</h1>
-      <p>自动将 VLESS / AnyTLS 节点转为本地独立 SOCKS5 端口，支持跳板链式中转，供 Surge 分流与测速</p>
+      <p>自动将 VLESS / AnyTLS / SOCKS5 节点转为本地独立 SOCKS5 端口（从 10808 起空缺自动填补），支持跳板链式中转</p>
     </div>
     <div style="display: flex; align-items: center; gap: 12px;">
       <div id="statusBadge" class="status-badge">
@@ -538,14 +539,18 @@
     <!-- Left: Input Area -->
     <div class="card">
       <h2>
-        <span>📋 粘贴新节点 (VLESS / AnyTLS)</span>
-        <span style="font-size: 12px; color: var(--text-sub); font-weight: normal;">支持多行批量</span>
+        <span>📋 粘贴新节点 (VLESS / AnyTLS / SOCKS5)</span>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button class="btn-secondary btn-sm" onclick="openAddSocksModal()">➕ 手动添加 SOCKS5</button>
+        </div>
       </h2>
-      <textarea id="rawInput" placeholder="在此粘贴一条或多条要添加的 vless:// 或 anytls:// 链接（一行一个）：
+      <textarea id="rawInput" placeholder="在此粘贴一条或多条要添加的节点链接（一行一个）：
 vless://uuid@server:port?type=tcp&security=reality&pbk=...&sni=...#香港01
 anytls://password@server:port?sni=...#日本02
+socks5://user:pass@server:port#原生Socks5
 
-👉 点击下方【⚡ 追加添加节点】将自动顺延端口并加入右侧列表，无需担心现有节点被清空。"></textarea>
+👉 点击下方【⚡ 追加添加节点】将自动在 10808 起优先填补已删除端口或顺延添加；
+👉 亦可点击右上角【➕ 手动添加 SOCKS5】直接填写 IP、端口与密码。"></textarea>
       
       <div class="input-actions">
         <button class="btn-secondary btn-sm" onclick="clearInput()">清空输入框</button>
@@ -567,7 +572,7 @@ anytls://password@server:port?sni=...#日本02
       </h2>
       <div class="node-list" id="nodeList">
         <div style="color: var(--text-sub); font-size: 13px; text-align: center; padding: 40px 0;">
-          暂无节点，请在左侧粘贴 vless:// 或 anytls:// 链接并点击“追加添加”
+          暂无节点，请在左侧粘贴节点链接或点击“手动添加 SOCKS5”
         </div>
       </div>
     </div>
@@ -616,8 +621,63 @@ anytls://password@server:port?sni=...#日本02
       </div>
       <div class="guide-step">
         <div class="step-num">4</div>
-        <div class="step-text">保存文件，Surge 会自动重载配置，即可在 Surge 策略组中无缝使用 VLESS 与 AnyTLS 节点！</div>
+        <div class="step-text">保存文件，Surge 会自动重载配置，即可在 Surge 策略组中无缝使用 VLESS、AnyTLS 与 SOCKS5 节点！</div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Custom SOCKS5 Modal -->
+<div id="addSocksModal" class="modal-overlay" style="display: none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>➕ 手动添加 SOCKS5 节点</h3>
+      <button class="modal-close" onclick="closeAddSocksModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group flex-2">
+          <label>节点名称 (Surge 备注)</label>
+          <input type="text" id="addSocksName" placeholder="例如：自建-香港Socks5">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group flex-2">
+          <label>服务器地址 (Host / IP) <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="addSocksServer" placeholder="例如：1.2.3.4 或 proxy.example.com">
+        </div>
+        <div class="form-group flex-1">
+          <label>服务器端口 <span style="color: #ef4444;">*</span></label>
+          <input type="number" id="addSocksServerPort" min="1" max="65535" placeholder="1080" value="1080">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group flex-1">
+          <label>用户名 (可选)</label>
+          <input type="text" id="addSocksUser" placeholder="无认证请留空">
+        </div>
+        <div class="form-group flex-1">
+          <label>密码 (可选)</label>
+          <input type="text" id="addSocksPass" placeholder="无认证请留空">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group flex-1">
+          <label style="display: flex; align-items: center; justify-content: space-between;">
+            <span>✈️ 跳板代理 (可选前置中转节点)</span>
+          </label>
+          <select id="addSocksDetour">
+            <option value="">直连 (不使用跳板，默认)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeAddSocksModal()">取消</button>
+      <button class="btn-primary" id="saveAddSocksBtn" onclick="submitAddSocksNode()">➕ 确认添加并应用</button>
     </div>
   </div>
 </div>
@@ -638,6 +698,7 @@ anytls://password@server:port?sni=...#日本02
           <select id="editProtocol" onchange="onProtocolChange()">
             <option value="vless">VLESS</option>
             <option value="anytls">AnyTLS</option>
+            <option value="socks5">SOCKS5</option>
           </select>
         </div>
         <div class="form-group flex-2">
@@ -646,7 +707,7 @@ anytls://password@server:port?sni=...#日本02
         </div>
         <div class="form-group flex-1">
           <label>本地 SOCKS5 端口</label>
-          <input type="number" id="editPort" min="1080" max="65535" placeholder="10810">
+          <input type="number" id="editPort" min="1080" max="65535" placeholder="10808">
         </div>
       </div>
 
@@ -677,6 +738,18 @@ anytls://password@server:port?sni=...#日本02
         </div>
       </div>
 
+      <!-- SOCKS5 Specific: Username & Password -->
+      <div id="socks5Fields" class="form-row" style="display: none;">
+        <div class="form-group flex-1">
+          <label>SOCKS5 用户名 (可选)</label>
+          <input type="text" id="editSocksUser" placeholder="无认证留空" oninput="syncFieldsToUrl()">
+        </div>
+        <div class="form-group flex-1">
+          <label>SOCKS5 密码 (可选)</label>
+          <input type="text" id="editSocksPass" placeholder="无认证留空" oninput="syncFieldsToUrl()">
+        </div>
+      </div>
+
       <!-- VLESS Specific: UUID -->
       <div id="vlessUuidGroup" class="form-group">
         <label>用户 UUID</label>
@@ -698,8 +771,8 @@ anytls://password@server:port?sni=...#日本02
         </div>
       </div>
 
-      <!-- SNI & ALPN -->
-      <div class="form-row">
+      <!-- SNI & ALPN (TLS Protocols) -->
+      <div id="tlsParamsGroup" class="form-row">
         <div class="form-group flex-2">
           <label>伪装域名 (SNI / ServerName) <span style="color: #f59e0b; font-size: 11px;">⚠️ 核心伪装</span></label>
           <input type="text" id="editSni" placeholder="例如：swdist.apple.com" oninput="syncFieldsToUrl()">
@@ -840,21 +913,26 @@ anytls://password@server:port?sni=...#日本02
     document.getElementById('nodeCount').innerText = nodes.length;
     const list = document.getElementById('nodeList');
     if (!nodes || nodes.length === 0) {
-      list.innerHTML = `<div style="color: var(--text-sub); font-size: 13px; text-align: center; padding: 40px 0;">暂无节点，请在左侧粘贴 vless:// 或 anytls:// 链接并追加添加</div>`;
+      list.innerHTML = `<div style="color: var(--text-sub); font-size: 13px; text-align: center; padding: 40px 0;">暂无节点，请在左侧粘贴节点链接或手动添加 SOCKS5</div>`;
       return;
     }
 
     list.innerHTML = nodes.map(node => {
-      const isAnyTLS = node.protocol === 'anytls' || (node.raw_link && node.raw_link.startsWith('anytls://'));
-      const protoBadge = isAnyTLS
-        ? `<span class="tag" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; font-weight: 600;">AnyTLS</span>`
-        : `<span class="tag" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-weight: 600;">VLESS</span>`;
+      const proto = node.protocol || (node.raw_link && node.raw_link.startsWith('anytls://') ? 'anytls' : (node.raw_link && node.raw_link.startsWith('socks') ? 'socks5' : 'vless'));
+      let protoBadge = '';
+      if (proto === 'anytls') {
+        protoBadge = `<span class="tag" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; font-weight: 600;">AnyTLS</span>`;
+      } else if (proto === 'socks5') {
+        protoBadge = `<span class="tag" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 600;">SOCKS5</span>`;
+      } else {
+        protoBadge = `<span class="tag" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-weight: 600;">VLESS</span>`;
+      }
 
       const detourBadge = (node.detour_port && node.detour_name)
         ? `<span class="tag" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 600;">✈️ 跳板: ${node.detour_name} [${node.detour_port}]</span>`
         : '';
 
-      const tags = (node.features || []).filter(f => f !== 'AnyTLS').map(f => `<span class="tag">${f}</span>`).join(' ');
+      const tags = (node.features || []).filter(f => f !== 'AnyTLS' && f !== 'SOCKS5').map(f => `<span class="tag">${f}</span>`).join(' ');
       const surgeLine = `${node.name} = socks5, 127.0.0.1, ${node.port}`;
       return `
         <div class="node-card">
@@ -883,6 +961,85 @@ anytls://password@server:port?sni=...#日本02
     }).join('');
   }
 
+  /* Add Custom SOCKS5 Modal Logic */
+  function openAddSocksModal() {
+    document.getElementById('addSocksName').value = '';
+    document.getElementById('addSocksServer').value = '';
+    document.getElementById('addSocksServerPort').value = '1080';
+    document.getElementById('addSocksUser').value = '';
+    document.getElementById('addSocksPass').value = '';
+
+    const detourSelect = document.getElementById('addSocksDetour');
+    detourSelect.innerHTML = '<option value="">直连 (不使用跳板，默认)</option>';
+    currentNodes.forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n.port;
+      opt.textContent = `[${n.port}] ${n.name} (${n.server})`;
+      detourSelect.appendChild(opt);
+    });
+
+    document.getElementById('addSocksModal').style.display = 'flex';
+  }
+
+  function closeAddSocksModal() {
+    document.getElementById('addSocksModal').style.display = 'none';
+  }
+
+  async function submitAddSocksNode() {
+    const server = document.getElementById('addSocksServer').value.trim();
+    const serverPort = parseInt(document.getElementById('addSocksServerPort').value.trim() || '1080');
+    const name = document.getElementById('addSocksName').value.trim();
+    const user = document.getElementById('addSocksUser').value.trim();
+    const pass = document.getElementById('addSocksPass').value.trim();
+    const detourVal = document.getElementById('addSocksDetour').value;
+    const detourPort = detourVal ? parseInt(detourVal) : null;
+
+    if (!server) {
+      alert('请输入 SOCKS5 服务器地址！');
+      return;
+    }
+    if (!serverPort || serverPort < 1 || serverPort > 65535) {
+      alert('请输入有效的服务器端口 (1-65535)！');
+      return;
+    }
+
+    const btn = document.getElementById('saveAddSocksBtn');
+    btn.disabled = true;
+    btn.innerText = '正在添加并应用...';
+
+    try {
+      const res = await fetch('/api/nodes/custom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          protocol: 'socks5',
+          name: name,
+          server: server,
+          server_port: serverPort,
+          socks_user: user,
+          socks_pass: pass,
+          detour_port: detourPort
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(data.message);
+        closeAddSocksModal();
+        renderNodes(data.nodes);
+        document.getElementById('proxyCode').innerText = data.surge_proxy;
+        document.getElementById('groupCode').innerText = data.surge_group;
+        loadStatus();
+      } else {
+        alert('添加失败: ' + (data.error || '未知错误'));
+      }
+    } catch (e) {
+      alert('请求失败: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerText = '➕ 确认添加并应用';
+    }
+  }
+
   /* Modal Edit Logic */
   function onProtocolChange() {
     toggleProtocolFields();
@@ -892,24 +1049,27 @@ anytls://password@server:port?sni=...#日本02
   function toggleProtocolFields() {
     const proto = document.getElementById('editProtocol').value;
     const isAnyTLS = proto === 'anytls';
+    const isSocks = proto === 'socks5';
+    const isVless = proto === 'vless';
 
     // Protocol sections
+    document.getElementById('socks5Fields').style.display = isSocks ? 'flex' : 'none';
     document.getElementById('anytlsFields').style.display = isAnyTLS ? 'flex' : 'none';
     document.getElementById('alpnGroup').style.display = isAnyTLS ? 'flex' : 'none';
 
-    document.getElementById('vlessUuidGroup').style.display = isAnyTLS ? 'none' : 'flex';
-    document.getElementById('flowGroup').style.display = isAnyTLS ? 'none' : 'flex';
-    document.getElementById('vlessTransportGroup').style.display = isAnyTLS ? 'none' : 'flex';
+    document.getElementById('vlessUuidGroup').style.display = isVless ? 'flex' : 'none';
+    document.getElementById('flowGroup').style.display = isVless ? 'flex' : 'none';
+    document.getElementById('vlessTransportGroup').style.display = isVless ? 'flex' : 'none';
+    document.getElementById('tlsParamsGroup').style.display = isSocks ? 'none' : 'flex';
 
-    if (isAnyTLS) {
-      document.getElementById('realityFields').style.display = 'none';
-      document.getElementById('wsFields').style.display = 'none';
-    } else {
+    if (isVless) {
       const sec = document.getElementById('editSecurity').value;
       const net = document.getElementById('editNetwork').value;
-
       document.getElementById('realityFields').style.display = (sec === 'reality') ? 'flex' : 'none';
       document.getElementById('wsFields').style.display = (net === 'ws' || net === 'httpupgrade') ? 'block' : 'none';
+    } else {
+      document.getElementById('realityFields').style.display = 'none';
+      document.getElementById('wsFields').style.display = 'none';
     }
   }
 
@@ -918,11 +1078,11 @@ anytls://password@server:port?sni=...#日本02
     if (!node) return;
     editingNode = JSON.parse(JSON.stringify(node));
 
-    const isAnyTLS = node.protocol === 'anytls' || (node.raw_link && node.raw_link.startsWith('anytls://'));
+    const proto = node.protocol || (node.raw_link && node.raw_link.startsWith('anytls://') ? 'anytls' : (node.raw_link && node.raw_link.startsWith('socks') ? 'socks5' : 'vless'));
 
     document.getElementById('modalTitle').innerText = `✏️ 修改节点: ${node.name}`;
     document.getElementById('editOriginalPort').value = node.port;
-    document.getElementById('editProtocol').value = isAnyTLS ? 'anytls' : 'vless';
+    document.getElementById('editProtocol').value = proto;
     document.getElementById('editName').value = node.name || '';
     document.getElementById('editPort').value = node.port || '';
 
@@ -940,11 +1100,11 @@ anytls://password@server:port?sni=...#日本02
     detourSelect.value = node.detour_port ? String(node.detour_port) : '';
 
     let host = node.server_host || '';
-    let sPort = node.server_port || 443;
+    let sPort = node.server_port || (proto === 'socks5' ? 1080 : 443);
     if (!host && node.server) {
       const parts = node.server.split(':');
       host = parts[0];
-      sPort = parts[1] || 443;
+      sPort = parts[1] || sPort;
     }
 
     document.getElementById('editServerHost').value = host;
@@ -952,7 +1112,10 @@ anytls://password@server:port?sni=...#日本02
     document.getElementById('editSni').value = node.sni || '';
     document.getElementById('editRawLink').value = node.raw_link || '';
 
-    if (isAnyTLS) {
+    if (proto === 'socks5') {
+      document.getElementById('editSocksUser').value = node.socks_user || '';
+      document.getElementById('editSocksPass').value = node.socks_pass || '';
+    } else if (proto === 'anytls') {
       document.getElementById('editPassword').value = node.password || '';
       document.getElementById('editInsecure').value = node.insecure ? '1' : '0';
       document.getElementById('editAlpn').value = node.alpn || '';
@@ -980,15 +1143,21 @@ anytls://password@server:port?sni=...#日本02
     const proto = document.getElementById('editProtocol').value;
     const name = document.getElementById('editName').value.trim();
     const server = document.getElementById('editServerHost').value.trim();
-    const port = document.getElementById('editServerPort').value.trim() || '443';
-    const sni = document.getElementById('editSni').value.trim();
+    const port = document.getElementById('editServerPort').value.trim() || (proto === 'socks5' ? '1080' : '443');
 
     if (!server) return;
 
-    if (proto === 'anytls') {
+    if (proto === 'socks5') {
+      const user = document.getElementById('editSocksUser').value.trim();
+      const pass = document.getElementById('editSocksPass').value.trim();
+      const authPart = user ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : '';
+      const url = `socks5://${authPart}${server}:${port}#${encodeURIComponent(name || 'SOCKS5')}`;
+      document.getElementById('editRawLink').value = url;
+    } else if (proto === 'anytls') {
       const password = document.getElementById('editPassword').value.trim();
       const insecure = document.getElementById('editInsecure').value === '1';
       const alpn = document.getElementById('editAlpn').value.trim();
+      const sni = document.getElementById('editSni').value.trim();
       if (!password) return;
 
       let q = '';
@@ -1006,6 +1175,7 @@ anytls://password@server:port?sni=...#日本02
       const pbk = document.getElementById('editPbk').value.trim();
       const sid = document.getElementById('editSid').value.trim();
       const path = document.getElementById('editPath').value.trim();
+      const sni = document.getElementById('editSni').value.trim();
 
       if (!uuid) return;
 
@@ -1030,7 +1200,25 @@ anytls://password@server:port?sni=...#日本02
 
   function syncUrlToFields() {
     const raw = document.getElementById('editRawLink').value.trim();
-    if (raw.startsWith('anytls://')) {
+    if (raw.startsWith('socks5://') || raw.startsWith('socks://')) {
+      document.getElementById('editProtocol').value = 'socks5';
+      try {
+        const p = new URL(raw);
+        const server = p.hostname;
+        const port = p.port || '1080';
+        const user = decodeURIComponent(p.username || '');
+        const pass = decodeURIComponent(p.password || '');
+        const remark = decodeURIComponent(p.hash ? p.hash.substring(1) : '');
+
+        if (server) document.getElementById('editServerHost').value = server;
+        if (port) document.getElementById('editServerPort').value = port;
+        if (user) document.getElementById('editSocksUser').value = user;
+        if (pass) document.getElementById('editSocksPass').value = pass;
+        if (remark) document.getElementById('editName').value = remark;
+
+        toggleProtocolFields();
+      } catch (e) {}
+    } else if (raw.startsWith('anytls://')) {
       document.getElementById('editProtocol').value = 'anytls';
       try {
         const p = new URL(raw);
@@ -1102,8 +1290,8 @@ anytls://password@server:port?sni=...#日本02
       alert('请输入有效的本地 SOCKS5 端口 (1024-65535)！');
       return;
     }
-    if (!rawLink.startsWith('vless://') && !rawLink.startsWith('anytls://')) {
-      alert('节点链接格式错误，必须以 vless:// 或 anytls:// 开头！');
+    if (!rawLink.startsWith('vless://') && !rawLink.startsWith('anytls://') && !rawLink.startsWith('socks5://') && !rawLink.startsWith('socks://')) {
+      alert('节点链接格式错误，必须以 vless://、anytls:// 或 socks5:// 开头！');
       return;
     }
 
@@ -1146,7 +1334,7 @@ anytls://password@server:port?sni=...#日本02
   async function saveNodes(mode = 'append') {
     const raw = document.getElementById('rawInput').value.trim();
     if (!raw) {
-      alert('请先在输入框粘贴 vless:// 或 anytls:// 链接！');
+      alert('请先在输入框粘贴节点链接！');
       return;
     }
 
@@ -1187,7 +1375,7 @@ anytls://password@server:port?sni=...#日本02
   }
 
   async function deleteNode(port, name) {
-    if (!confirm(`确定删除节点【${name}】(端口: 127.0.0.1:${port}) 吗？`)) {
+    if (!confirm(`确定删除节点【${name}】(端口: 127.0.0.1:${port}) 吗？\n删除后该端口将在下次添加新节点时被优先填补复用。`)) {
       return;
     }
 
@@ -1199,7 +1387,7 @@ anytls://password@server:port?sni=...#日本02
       });
       const data = await res.json();
       if (data.ok) {
-        showToast('节点已删除！');
+        showToast('节点已删除！空出端口可复用');
         renderNodes(data.nodes);
         document.getElementById('proxyCode').innerText = data.surge_proxy || '# 暂无已映射节点';
         document.getElementById('groupCode').innerText = data.surge_group || '# 暂无已映射节点';

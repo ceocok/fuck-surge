@@ -1,6 +1,6 @@
-# Surge VLESS & AnyTLS Bridge Hub (fuck-surge)
+# Surge VLESS, AnyTLS & SOCKS5 Bridge Hub (fuck-surge)
 
-为 macOS 上的 **Surge** 提供无缝使用 **VLESS (Reality / Vision / WebSocket / gRPC)** 与 **AnyTLS** 节点的本地轻量中枢面板。
+为 macOS 上的 **Surge** 提供无缝使用 **VLESS (Reality / Vision / WebSocket / gRPC)**、**AnyTLS** 与 **SOCKS5** 节点的本地轻量中枢面板。
 
 ![ScreenShot_2026-09-28_161050_808](https://github.com/ceocok/fuck-surge/blob/main/ScreenShot_2026-09-28_161050_808.png)
 
@@ -10,28 +10,30 @@
 
 Surge 是一款优秀的 macOS 规则分流与网络调试工具，但受限于闭源架构与安全机制，原生无法支持 VLESS / Reality 以及 AnyTLS 协议。
 
-**Fuck-Surge** 通过在本地运行专用的轻量代理内核（优先使用 `sing-box`，亦兼容 `xray`），将每个 VLESS 和 AnyTLS 节点自动映射为本地独立的 SOCKS5 入站端口（`127.0.0.1:10810`, `10811`, ...），并自动为 Surge 生成开箱即用的配置代码。
+**Fuck-Surge** 通过在本地运行专用的轻量代理内核（优先使用 `sing-box`，亦兼容 `xray`），将每个 VLESS、AnyTLS 以及远程 SOCKS5 节点自动映射为本地独立的 SOCKS5 入站端口（默认从 `127.0.0.1:10808` 起，删除节点后空缺端口自动填补复用），并自动为 Surge 生成开箱即用的配置代码。
 
 > 流量路径：
-> **应用程序** $\xrightarrow{\text{Surge 规则分流}}$ **本地 127.0.0.1:1081x (SOCKS5)** $\xrightarrow{\text{本地内核 (VLESS/AnyTLS)}}$ **远端服务器**
+> **应用程序** $\xrightarrow{\text{Surge 规则分流}}$ **本地 127.0.0.1:1080x (SOCKS5)** $\xrightarrow{\text{本地内核 (VLESS/AnyTLS/SOCKS5)}}$ **远端服务器**
 
-这样既能继续享受 Surge 强大的规则系统、Dashboard 抓包和虚拟网卡（Enhanced Mode / TUN），又完美支持了 VLESS 和 AnyTLS 协议！
+这样既能继续享受 Surge 强大的规则系统、Dashboard 抓包和虚拟网卡（Enhanced Mode / TUN），又完美支持了各种新一代和传统代理协议！
 
 ---
 
 ## ✨ 核心特性
 
-1. **多协议一键解析**：直接粘贴单条或多条 `vless://` 或 `anytls://` 链接，自动解析协议、密码/UUID、SNI 及 Reality 公钥。
+1. **多协议一键解析与录入**：
+   - 直接粘贴单条或多条 `vless://`、`anytls://` 或 `socks5://` 链接自动解析。
+   - **自定义 SOCKS5 表单添加**：无需构造链接，直接在界面填写 IP、端口、账号密码即可一键录入。
    - **VLESS 支持**：TCP (Reality / TLS / Vision)、WebSocket、gRPC、HTTPUpgrade。
    - **AnyTLS 支持**：标准 AnyTLS 链接解析与 TLS / ALPN 封装。
-2. **增量追加与端口自动顺延**：支持随时粘贴新节点点击追加添加，端口按顺序自动顺延（`127.0.0.1:10810`, `10811`, `10812`...），绝不覆盖已有节点；支持单个节点独立删除与一键清空。
+2. **端口优化：从 10808 起空缺优先填补**：本地监听端口默认起始于 `10808`；当删除列表中间或任意节点时，再次添加新节点将**优先自动填补已空出的端口**，避免端口无限向后膨胀。
 3. **Surge 一键配置生成**：
    - 自动生成 `[Proxy]` 节点配置。
    - 自动生成 `[Proxy Group]` 策略组（支持手动选择与 `url-test` 自动容灾优选）。
 4. **内置实时测速**：面板内一键检测各个节点的真实网络延迟。
 5. **本地配置持久化**：重启后自动加载保存的节点。
 6. **网页端可视化修改节点**：支持在网页卡片上一键点击【✏️ 修改】，自由编辑节点协议、备注名称、本地 SOCKS5 端口、远程地址与端口、伪装域名（SNI）、密码/UUID、Reality 公钥/Short ID、流控等，支持表单与原始链接双向同步并实时生效重载。
-7. **链式跳板代理 (Relay / Detour)**：修改节点时支持通过下拉菜单直接选择任意已添加的节点作为前置跳板（前置机 ➔ 落地机），内核层自动链式转发并内置防死锁循环检测，优雅解决某些落地机直接连通性不佳的问题。
+7. **链式跳板代理 (Relay / Detour)**：修改或添加节点时支持通过下拉菜单直接选择任意已添加的节点作为前置跳板（前置机 ➔ 落地机），内核层自动链式转发并内置防死锁循环检测，优雅解决某些落地机直接连通性不佳的问题。
 
 ---
 

@@ -742,9 +742,12 @@ def generate_surge_snippets(nodes):
     if not nodes:
         return "", ""
 
+    # Sort nodes by port ascending
+    sorted_nodes = sorted(nodes, key=lambda x: x["port"])
+
     proxy_lines = ["[Proxy]"]
     node_names = []
-    for node in nodes:
+    for node in sorted_nodes:
         name = node["name"]
         port = node["port"]
         proxy_lines.append(f"{name} = socks5, 127.0.0.1, {port}")
@@ -822,6 +825,9 @@ def rebuild_and_apply_nodes(node_list):
             else:
                 node.pop("detour_port", None)
                 node.pop("detour_name", None)
+
+    # Sort full_nodes ascending by port
+    full_nodes.sort(key=lambda x: x["port"])
 
     core_type, bin_path = get_best_core(full_nodes)
 

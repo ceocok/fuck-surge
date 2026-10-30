@@ -909,10 +909,12 @@ socks5://user:pass@server:port#原生Socks5
   }
 
   function renderNodes(nodes) {
+    if (!nodes) nodes = [];
+    nodes.sort((a, b) => (a.port || 0) - (b.port || 0));
     currentNodes = nodes;
     document.getElementById('nodeCount').innerText = nodes.length;
     const list = document.getElementById('nodeList');
-    if (!nodes || nodes.length === 0) {
+    if (nodes.length === 0) {
       list.innerHTML = `<div style="color: var(--text-sub); font-size: 13px; text-align: center; padding: 40px 0;">暂无节点，请在左侧粘贴节点链接或手动添加 SOCKS5</div>`;
       return;
     }

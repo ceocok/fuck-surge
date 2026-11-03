@@ -861,6 +861,12 @@ def rebuild_and_apply_nodes(node_list):
 
 
 class RequestHandler(http.server.SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format, *args):
+        # Disable console/file access logging for routine requests to eliminate I/O overhead
+        pass
+
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -1362,8 +1368,9 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
 
-class ReusableTCPServer(socketserver.TCPServer):
+class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 def main():

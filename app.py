@@ -1055,6 +1055,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 {
                     "ok": True,
                     "message": f"成功添加自定义 SOCKS5 节点【{node_dict['name']}】！",
+                    "added_ports": [node_dict["port"]],
                     "nodes": display_nodes,
                     "surge_proxy": proxy_snippet,
                     "surge_group": group_snippet,
@@ -1126,6 +1127,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     "message": msg,
                     "added_count": added_count,
                     "skipped_count": skipped_count,
+                    "added_ports": [n["port"] for n in new_nodes_to_add],
                     "nodes": display_nodes,
                     "surge_proxy": proxy_snippet,
                     "surge_group": group_snippet,

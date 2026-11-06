@@ -233,7 +233,26 @@
       justify-content: space-between;
       align-items: center;
       gap: 12px;
-      transition: border-color 0.15s ease;
+      transition: all 0.25s ease;
+    }
+
+    .node-card.highlight {
+      border-color: var(--primary) !important;
+      background: rgba(56, 189, 248, 0.12) !important;
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
+      animation: pulseHighlight 2.5s ease-out forwards;
+    }
+
+    @keyframes pulseHighlight {
+      0% {
+        transform: scale(1.02);
+      }
+      50% {
+        transform: scale(1.01);
+      }
+      100% {
+        transform: scale(1);
+      }
     }
 
     .node-card:hover {
@@ -848,11 +867,12 @@ socks5://user:pass@server:port#原生Socks5
   let currentNodes = [];
   let editingNode = null;
 
-  function showToast(msg) {
+  function showToast(msg, duration = 2200) {
     const toast = document.getElementById('toast');
-    toast.textContent = msg;
+    toast.innerHTML = msg;
     toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 2200);
+    clearTimeout(window.__toastTimer);
+    window.__toastTimer = setTimeout(() => toast.classList.remove('show'), duration);
   }
 
   function copyText(elementId) {
@@ -900,7 +920,13 @@ socks5://user:pass@server:port#原生Socks5
         statusText.textContent = '核心已停止';
       }
 
-      renderNodes(data.nodes || []);
+      // If recently added, preserve highlight during background poll
+      const existingHighlights = Array.from(document.querySelectorAll('.node-card.highlight')).map(el => {
+        const id = el.id || '';
+        return parseInt(id.replace('node-card-', '')) || 0;
+      }).filter(p => p > 0);
+
+      renderNodes(data.nodes || [], existingHighlights);
       if (data.surge_proxy) document.getElementById('proxyCode').innerText = data.surge_proxy;
       if (data.surge_group) document.getElementById('groupCode').innerText = data.surge_group;
     } catch (e) {
@@ -908,7 +934,7 @@ socks5://user:pass@server:port#原生Socks5
     }
   }
 
-  function renderNodes(nodes) {
+  function renderNodes(nodes, highlightPorts = []) {
     if (!nodes) nodes = [];
     nodes.sort((a, b) => (a.port || 0) - (b.port || 0));
     currentNodes = nodes;
@@ -920,6 +946,7 @@ socks5://user:pass@server:port#原生Socks5
     }
 
     list.innerHTML = nodes.map(node => {
+      const isNew = highlightPorts.includes(node.port);
       const proto = node.protocol || (node.raw_link && node.raw_link.startsWith('anytls://') ? 'anytls' : (node.raw_link && node.raw_link.startsWith('socks') ? 'socks5' : 'vless'));
       let protoBadge = '';
       if (proto === 'anytls') {
@@ -934,17 +961,22 @@ socks5://user:pass@server:port#原生Socks5
         ? `<span class="tag" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 600;">✈️ 跳板: ${node.detour_name} [${node.detour_port}]</span>`
         : '';
 
+      const newBadge = isNew
+        ? `<span class="tag" style="background: rgba(56, 189, 248, 0.25); color: #38bdf8; border: 1px solid var(--primary); font-weight: 700;">✨ 新增</span>`
+        : '';
+
       const tags = (node.features || []).filter(f => f !== 'AnyTLS' && f !== 'SOCKS5').map(f => `<span class="tag">${f}</span>`).join(' ');
       const surgeLine = `${node.name} = socks5, 127.0.0.1, ${node.port}`;
       return `
-        <div class="node-card">
+        <div class="node-card ${isNew ? 'highlight' : ''}" id="node-card-${node.port}">
           <div class="node-main">
             <div class="node-title">
               ${protoBadge}
               <span>${node.name}</span>
+              ${newBadge}
             </div>
             <div class="node-meta">
-              <span class="socks-tag">127.0.0.1:${node.port}</span>
+              <span class="socks-tag" style="${isNew ? 'background: #38bdf8; color: #0f172a; font-weight: 700;' : ''}">127.0.0.1:${node.port}</span>
               <span>${node.server}</span>
               ${detourBadge}
               ${node.sni ? `<span class="tag" style="color: #38bdf8;">SNI: ${node.sni}</span>` : ''}
@@ -961,6 +993,15 @@ socks5://user:pass@server:port#原生Socks5
         </div>
       `;
     }).join('');
+
+    if (highlightPorts.length > 0) {
+      setTimeout(() => {
+        const firstNewEl = document.getElementById(`node-card-${highlightPorts[0]}`);
+        if (firstNewEl) {
+          firstNewEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 100);
+    }
   }
 
   /* Add Custom SOCKS5 Modal Logic */
@@ -1025,9 +1066,14 @@ socks5://user:pass@server:port#原生Socks5
       });
       const data = await res.json();
       if (data.ok) {
-        showToast(data.message);
+        let toastMsg = data.message;
+        if (data.added_ports && data.added_ports.length > 0) {
+          const portsStr = data.added_ports.map(p => `127.0.0.1:${p}`).join(', ');
+          toastMsg += `<br><span style="font-size:12px;opacity:0.95;">分配端口: <strong>${portsStr}</strong></span>`;
+        }
+        showToast(toastMsg, 4000);
         closeAddSocksModal();
-        renderNodes(data.nodes);
+        renderNodes(data.nodes, data.added_ports || []);
         document.getElementById('proxyCode').innerText = data.surge_proxy;
         document.getElementById('groupCode').innerText = data.surge_group;
         loadStatus();
@@ -1359,9 +1405,14 @@ socks5://user:pass@server:port#原生Socks5
       });
       const data = await res.json();
       if (data.ok) {
-        showToast(data.message);
+        let toastMsg = data.message;
+        if (data.added_ports && data.added_ports.length > 0) {
+          const portsStr = data.added_ports.map(p => `127.0.0.1:${p}`).join(', ');
+          toastMsg += `<br><span style="font-size:12px;opacity:0.95;">分配端口: <strong>${portsStr}</strong></span>`;
+        }
+        showToast(toastMsg, 4000);
         document.getElementById('rawInput').value = '';
-        renderNodes(data.nodes);
+        renderNodes(data.nodes, data.added_ports || []);
         document.getElementById('proxyCode').innerText = data.surge_proxy;
         document.getElementById('groupCode').innerText = data.surge_group;
         loadStatus();

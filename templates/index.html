@@ -946,10 +946,13 @@ socks5://user:pass@server:port#原生Socks5
     }
 
     list.innerHTML = nodes.map(node => {
+      const isGateway = !!node.is_gateway;
       const isNew = highlightPorts.includes(node.port);
       const proto = node.protocol || (node.raw_link && node.raw_link.startsWith('anytls://') ? 'anytls' : (node.raw_link && node.raw_link.startsWith('socks') ? 'socks5' : 'vless'));
       let protoBadge = '';
-      if (proto === 'anytls') {
+      if (isGateway) {
+        protoBadge = `<span class="tag" style="background: rgba(14, 165, 233, 0.25); color: #38bdf8; font-weight: 700; border: 1px solid rgba(56, 189, 248, 0.4);">⚡ 动态网关</span>`;
+      } else if (proto === 'anytls') {
         protoBadge = `<span class="tag" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; font-weight: 600;">AnyTLS</span>`;
       } else if (proto === 'socks5') {
         protoBadge = `<span class="tag" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 600;">SOCKS5</span>`;
@@ -967,8 +970,21 @@ socks5://user:pass@server:port#原生Socks5
 
       const tags = (node.features || []).filter(f => f !== 'AnyTLS' && f !== 'SOCKS5').map(f => `<span class="tag">${f}</span>`).join(' ');
       const surgeLine = `${node.name} = socks5, 127.0.0.1, ${node.port}`;
+
+      const actionButtons = isGateway ? `
+        <span id="ping-${node.port}" class="ping-badge">- ms</span>
+        <button class="btn-secondary btn-sm" onclick="pingNode(${node.port})">测速</button>
+        <button class="btn-secondary btn-sm" onclick="copyRaw('${surgeLine}')">复制</button>
+      ` : `
+        <span id="ping-${node.port}" class="ping-badge">- ms</span>
+        <button class="btn-secondary btn-sm" onclick="pingNode(${node.port})">测速</button>
+        <button class="btn-secondary btn-sm" onclick="openEditModal(${node.port})">✏️ 修改</button>
+        <button class="btn-secondary btn-sm" onclick="copyRaw('${surgeLine}')">复制</button>
+        <button class="btn-danger btn-sm" onclick="deleteNode(${node.port}, '${node.name}')" title="删除该节点">删除</button>
+      `;
+
       return `
-        <div class="node-card ${isNew ? 'highlight' : ''}" id="node-card-${node.port}">
+        <div class="node-card ${isNew ? 'highlight' : ''}" id="node-card-${node.port}" style="${isGateway ? 'border-color: rgba(56, 189, 248, 0.35); background: rgba(15, 23, 42, 0.85);' : ''}">
           <div class="node-main">
             <div class="node-title">
               ${protoBadge}
@@ -976,19 +992,15 @@ socks5://user:pass@server:port#原生Socks5
               ${newBadge}
             </div>
             <div class="node-meta">
-              <span class="socks-tag" style="${isNew ? 'background: #38bdf8; color: #0f172a; font-weight: 700;' : ''}">127.0.0.1:${node.port}</span>
-              <span>${node.server}</span>
+              <span class="socks-tag" style="${isGateway ? 'background: #0284c7; color: #fff; font-weight: 700;' : (isNew ? 'background: #38bdf8; color: #0f172a; font-weight: 700;' : '')}">127.0.0.1:${node.port}</span>
+              <span>${isGateway ? `真实上游: ${node.server}` : node.server}</span>
               ${detourBadge}
               ${node.sni ? `<span class="tag" style="color: #38bdf8;">SNI: ${node.sni}</span>` : ''}
               ${tags}
             </div>
           </div>
           <div class="node-actions">
-            <span id="ping-${node.port}" class="ping-badge">- ms</span>
-            <button class="btn-secondary btn-sm" onclick="pingNode(${node.port})">测速</button>
-            <button class="btn-secondary btn-sm" onclick="openEditModal(${node.port})">✏️ 修改</button>
-            <button class="btn-secondary btn-sm" onclick="copyRaw('${surgeLine}')">复制</button>
-            <button class="btn-danger btn-sm" onclick="deleteNode(${node.port}, '${node.name}')" title="删除该节点">删除</button>
+            ${actionButtons}
           </div>
         </div>
       `;

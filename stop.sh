@@ -17,11 +17,13 @@ if [ -f "$DIR/data/app.pid" ]; then
     rm -f "$DIR/data/app.pid"
 fi
 
-# Stop any process holding port 9099
-APP_PORT_PID=$(lsof -ti :${PORT})
-if [ -n "$APP_PORT_PID" ]; then
-    kill -9 $APP_PORT_PID 2>/dev/null
-fi
+# Stop any process holding port 9099 or 18080
+for p in ${PORT} 18080; do
+    P_PID=$(lsof -ti :${p})
+    if [ -n "$P_PID" ]; then
+        kill -9 $P_PID 2>/dev/null
+    fi
+done
 
 # Stop Core (sing-box or xray) if running
 for pidfile in "$DIR/data/core.pid" "$DIR/data/xray.pid"; do

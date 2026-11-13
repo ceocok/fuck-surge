@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
+import http.client
 import http.server
 import json
 import os
 import re
+import select
 import shutil
+import socket
 import socketserver
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -24,6 +28,202 @@ LEGACY_PID_PATH = DATA_DIR / "xray.pid"
 
 BASE_SOCKS_PORT = 10808
 WEB_PORT = 9099
+DYNAMIC_GATEWAY_PORT = 18080
+DYNAMIC_SOURCE_URL = "https://sg.cococ.eu.org/"
+
+
+class DynamicSocks5Gateway:
+    """
+    Built-in dynamic SOCKS5 gateway running on 127.0.0.1:18080.
+    Fetches upstream residential broadband SOCKS5 IP:Port via HTTP 302 redirect from sg.cococ.eu.org,
+    and forwards incoming traffic transparently.
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __init__(self, host="127.0.0.1", port=DYNAMIC_GATEWAY_PORT, source_url=DYNAMIC_SOURCE_URL, refresh_interval=30):
+        self.host = host
+        self.port = port
+        self.source_url = source_url
+        self.refresh_interval = refresh_interval
+        self.upstream = None  # (host, port)
+        self.upstream_time = 0
+        self.running = False
+        self.server_sock = None
+        self._thread = None
+        self._poller_thread = None
+
+    @classmethod
+    def get_instance(cls):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+
+    def fetch_upstream(self):
+        try:
+            p = urllib.parse.urlparse(self.source_url)
+            conn = http.client.HTTPSConnection(p.netloc, timeout=6)
+            conn.request("HEAD", p.path or "/", headers={"User-Agent": "sg-cococ-socks5-gateway/1.0", "Accept": "*/*"})
+            res = conn.getresponse()
+            loc = res.getheader("Location")
+            conn.close()
+            if res.status in (301, 302, 307, 308) and loc:
+                target = urllib.parse.urlparse(loc)
+                host = target.hostname
+                port = target.port or 1080
+                return host, port
+        except Exception:
+            pass
+        return None
+
+    def get_upstream(self, force=False):
+        now = time.time()
+        if not force and self.upstream and (now - self.upstream_time < self.refresh_interval):
+            return self.upstream
+        up = self.fetch_upstream()
+        if up:
+            self.upstream = up
+            self.upstream_time = time.time()
+        return self.upstream
+
+    def handle_client(self, client_sock):
+        remote_sock = None
+        try:
+            client_sock.settimeout(10)
+            hello = client_sock.recv(256)
+            if not hello or hello[0] != 0x05:
+                client_sock.close()
+                return
+
+            client_sock.sendall(b"\x05\x00")
+
+            req = client_sock.recv(512)
+            if not req or len(req) < 7 or req[0] != 0x05 or req[1] != 0x01:
+                client_sock.sendall(b"\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00")
+                client_sock.close()
+                return
+
+            up = self.get_upstream()
+            if not up:
+                client_sock.sendall(b"\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00")
+                client_sock.close()
+                return
+
+            remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            remote_sock.settimeout(10)
+            remote_sock.connect(up)
+
+            remote_sock.sendall(b"\x05\x01\x00")
+            up_hello = remote_sock.recv(2)
+            if not up_hello or up_hello != b"\x05\x00":
+                client_sock.sendall(b"\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00")
+                client_sock.close()
+                remote_sock.close()
+                return
+
+            remote_sock.sendall(req)
+            up_reply = remote_sock.recv(512)
+            if not up_reply:
+                client_sock.sendall(b"\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00")
+                client_sock.close()
+                remote_sock.close()
+                return
+
+            client_sock.sendall(up_reply)
+            if len(up_reply) >= 2 and up_reply[1] != 0x00:
+                client_sock.close()
+                remote_sock.close()
+                return
+
+            client_sock.setblocking(False)
+            remote_sock.setblocking(False)
+
+            sockets = [client_sock, remote_sock]
+            while self.running:
+                r, _, w = select.select(sockets, [], sockets, 60)
+                if not r and not w:
+                    break
+                for s in r:
+                    data = s.recv(32768)
+                    if not data:
+                        return
+                    if s is client_sock:
+                        remote_sock.sendall(data)
+                    else:
+                        client_sock.sendall(data)
+        except Exception:
+            self.get_upstream(force=True)
+        finally:
+            try:
+                client_sock.close()
+            except Exception:
+                pass
+            try:
+                if remote_sock:
+                    remote_sock.close()
+            except Exception:
+                pass
+
+    def start(self):
+        if self.running:
+            return
+        try:
+            self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_sock.bind((self.host, self.port))
+            self.server_sock.listen(128)
+            self.running = True
+        except Exception as e:
+            print(f"[!] 动态 SOCKS5 网关启动失败: {e}")
+            return
+
+        def accept_loop():
+            while self.running:
+                try:
+                    csock, _ = self.server_sock.accept()
+                    t = threading.Thread(target=self.handle_client, args=(csock,), daemon=True)
+                    t.start()
+                except Exception:
+                    break
+
+        def poller_loop():
+            while self.running:
+                self.get_upstream(force=True)
+                time.sleep(self.refresh_interval)
+
+        self._thread = threading.Thread(target=accept_loop, daemon=True)
+        self._thread.start()
+
+        self._poller_thread = threading.Thread(target=poller_loop, daemon=True)
+        self._poller_thread.start()
+
+        print(f"[*] 动态家宽 SOCKS5 网关已启动: socks5://{self.host}:{self.port} (上游: {self.get_upstream()})")
+
+    def stop(self):
+        self.running = False
+        if self.server_sock:
+            try:
+                self.server_sock.close()
+            except Exception:
+                pass
+            self.server_sock = None
+
+    def get_info(self):
+        up = self.get_upstream()
+        up_str = f"{up[0]}:{up[1]}" if up else "解析中..."
+        return {
+            "name": "动态家宽-网关",
+            "protocol": "socks5",
+            "port": self.port,
+            "server": up_str,
+            "server_host": "127.0.0.1",
+            "server_port": self.port,
+            "raw_link": f"socks5://127.0.0.1:{self.port}#%E5%8A%A8%E6%80%81%E5%AE%B6%E5%AE%BD-%E7%BD%91%E5%85%B3",
+            "features": ["SOCKS5", "动态中转"],
+            "is_gateway": True,
+            "remote_upstream": up_str,
+        }
 
 
 def find_binary(name: str):
@@ -548,6 +748,16 @@ def build_singbox_config(parsed_nodes):
             }
         )
 
+    # If any node detours to DYNAMIC_GATEWAY_PORT (18080), ensure a dedicated sing-box outbound exists
+    if any(n.get("detour_port") == DYNAMIC_GATEWAY_PORT for n in parsed_nodes):
+        if not any(o.get("tag") == f"out-{DYNAMIC_GATEWAY_PORT}" for o in outbounds):
+            outbounds.append({
+                "type": "socks",
+                "tag": f"out-{DYNAMIC_GATEWAY_PORT}",
+                "server": "127.0.0.1",
+                "server_port": DYNAMIC_GATEWAY_PORT,
+            })
+
     outbounds.append({"type": "direct", "tag": "direct"})
     outbounds.append({"type": "block", "tag": "block"})
 
@@ -820,7 +1030,9 @@ def rebuild_and_apply_nodes(node_list):
     for node in full_nodes:
         dp = node.get("detour_port")
         if dp:
-            if dp in port_to_node and dp != node["port"]:
+            if dp == DYNAMIC_GATEWAY_PORT:
+                node["detour_name"] = "动态家宽-网关"
+            elif dp in port_to_node and dp != node["port"]:
                 node["detour_name"] = port_to_node[dp]["name"]
             else:
                 node.pop("detour_port", None)
@@ -905,8 +1117,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/status":
             saved = load_saved_nodes()
-            nodes = saved.get("nodes", [])
-            proxy_snippet, group_snippet = generate_surge_snippets(nodes)
+            nodes = list(saved.get("nodes", []))
+
+            # Prepend the dynamic residential gateway node so it always appears and is accessible
+            gw = DynamicSocks5Gateway.get_instance()
+            gw_node = gw.get_info()
+            all_display_nodes = [gw_node] + nodes
+
+            proxy_snippet, group_snippet = generate_surge_snippets(all_display_nodes)
             running = CoreManager.is_running()
             pid = CoreManager.get_pid()
 
@@ -923,10 +1141,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     "xray_installed": bool(XRAY_BIN),
                     "running": running,
                     "pid": pid,
-                    "nodes": nodes,
+                    "nodes": all_display_nodes,
                     "raw": saved.get("raw", ""),
                     "surge_proxy": proxy_snippet,
                     "surge_group": group_snippet,
+                    "gateway": {
+                        "port": DYNAMIC_GATEWAY_PORT,
+                        "upstream": gw.get_upstream(),
+                    },
                 }
             )
             return
@@ -1240,27 +1462,31 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_json({"ok": False, "error": "节点不能选择自身作为跳板代理"}, 400)
                     return
 
-                for n in existing_nodes:
-                    if n.get("port") == detour_port and n.get("port") != original_port:
-                        target_detour_node = n
-                        break
+                if detour_port == DYNAMIC_GATEWAY_PORT:
+                    target_detour_node = {"name": "动态家宽-网关", "port": DYNAMIC_GATEWAY_PORT}
+                else:
+                    for n in existing_nodes:
+                        if n.get("port") == detour_port and n.get("port") != original_port:
+                            target_detour_node = n
+                            break
 
                 if not target_detour_node:
                     self.send_json({"ok": False, "error": f"所选的跳板节点 (端口 {detour_port}) 不存在"}, 400)
                     return
 
-                # Construct chain graph to detect potential cycles
-                nodes_chain_map = {}
-                for n in existing_nodes:
-                    p = n.get("port")
-                    if p == original_port:
-                        continue
-                    nodes_chain_map[p] = n.get("detour_port")
-                nodes_chain_map[new_port] = detour_port
+                # Construct chain graph to detect potential cycles (gateway cannot cycle)
+                if detour_port != DYNAMIC_GATEWAY_PORT:
+                    nodes_chain_map = {}
+                    for n in existing_nodes:
+                        p = n.get("port")
+                        if p == original_port:
+                            continue
+                        nodes_chain_map[p] = n.get("detour_port")
+                    nodes_chain_map[new_port] = detour_port
 
-                if check_detour_cycle(nodes_chain_map):
-                    self.send_json({"ok": False, "error": "跳板代理链路形成了循环嵌套 (例如 A -> B -> A)，请重新选择"}, 400)
-                    return
+                    if check_detour_cycle(nodes_chain_map):
+                        self.send_json({"ok": False, "error": "跳板代理链路形成了循环嵌套 (例如 A -> B -> A)，请重新选择"}, 400)
+                        return
 
             parsed = parse_node_link(raw_link, new_port)
             if not parsed:
@@ -1376,6 +1602,9 @@ class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 def main():
+    # Start built-in dynamic residential SOCKS5 gateway on 18080
+    DynamicSocks5Gateway.get_instance().start()
+
     saved = load_saved_nodes()
     nodes = saved.get("nodes", [])
 

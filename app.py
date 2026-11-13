@@ -952,8 +952,12 @@ def generate_surge_snippets(nodes):
     if not nodes:
         return "", ""
 
-    # Sort nodes by port ascending
-    sorted_nodes = sorted(nodes, key=lambda x: x["port"])
+    # Sort nodes: gateway node always first, then by port ascending
+    def sort_key(x):
+        is_gw = 0 if (x.get("is_gateway") or x.get("port") == DYNAMIC_GATEWAY_PORT) else 1
+        return (is_gw, x.get("port", 0))
+
+    sorted_nodes = sorted(nodes, key=sort_key)
 
     proxy_lines = ["[Proxy]"]
     node_names = []
